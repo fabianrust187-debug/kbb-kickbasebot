@@ -1,0 +1,18 @@
+{
+  "name": "kbb-kickbasebot",
+  "version": "0.1.0",
+  "description": "187 KICKBASEBANDE Discord Bot for Kickbase league management",
+  "type": "module",
+  "main": "src/bot.js",
+  "scripts": {
+    "start": "node src/bot.js",
+    "register": "node src/registerCommands.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "discord.js": "^14.21.0",
+    "dotenv": "^16.4.5"
+  }
+}
