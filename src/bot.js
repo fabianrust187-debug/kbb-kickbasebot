@@ -41,6 +41,10 @@ client.on(Events.GuildCreate, async (guild) => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
+    if (interaction.isModalSubmit()) {
+      if (await kbbCommand.handleModalSubmit?.(interaction)) return;
+    }
+
     if (!interaction.isChatInputCommand()) return;
 
     const command = commands.get(interaction.commandName);
