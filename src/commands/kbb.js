@@ -25,9 +25,9 @@ function buildRulesDescription() {
   return [
     `# 🟢 ${LEAGUE_INFO.name} | Saison ${LEAGUE_INFO.season}`,
     "",
-    `Willkommen in der **${LEAGUE_INFO.name}**.",
+    `Willkommen in der **${LEAGUE_INFO.name}**.`,
     "",
-    `Wir spielen die kommende **Bundesliga-Saison ${LEAGUE_INFO.season}** mit **${LEAGUE_INFO.managers} Managern**, klaren Regeln und diesem Discord-Server als zentrale Anlaufstelle.",
+    `Wir spielen die kommende **Bundesliga-Saison ${LEAGUE_INFO.season}** mit **${LEAGUE_INFO.managers} Managern**, klaren Regeln und diesem Discord-Server als zentrale Anlaufstelle.`,
     "",
     "---",
     "",
