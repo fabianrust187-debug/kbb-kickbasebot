@@ -2,9 +2,19 @@ import {
   SlashCommandBuilder,
   ChannelType,
   PermissionFlagsBits,
+  ActionRowBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
 } from "discord.js";
 import { buildErrorEmbed, buildKbbEmbed, buildSuccessEmbed } from "../utils/embeds.js";
 import { getGuildSettings, setGuildSettings } from "../utils/guildSettings.js";
+import {
+  addTop5Submission,
+  getTop5SubmissionForUser,
+  getTop5Submissions,
+  resetTop5Round,
+} from "../utils/top5Store.js";
 
 const LEAGUE_INFO = {
   name: "187 KICKBASEBANDE",
@@ -16,109 +26,16 @@ const LEAGUE_INFO = {
   payment: "paypal.me/Vegetarox",
 };
 
+const TOP5_CHANNEL_ID = process.env.TOP5_CHANNEL_ID || "1522249357179617331";
+const TOP5_TARGET = Number(process.env.TOP5_MANAGER_TARGET || LEAGUE_INFO.managers || 14);
+
 function hasManageServerPermission(interaction) {
   return !!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
     || !!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator);
 }
 
-function buildRulesDescription() {
-  return [
-    `# 🟢 ${LEAGUE_INFO.name} | Saison ${LEAGUE_INFO.season}`,
-    "",
-    `Willkommen in der **${LEAGUE_INFO.name}**.`,
-    "",
-    `Wir spielen die kommende **Bundesliga-Saison ${LEAGUE_INFO.season}** mit **${LEAGUE_INFO.managers} Managern**, klaren Regeln und diesem Discord-Server als zentrale Anlaufstelle.`,
-    "",
-    "---",
-    "",
-    "## 📌 Liga-Infos",
-    "",
-    `**Saison:** ${LEAGUE_INFO.season}`,
-    `**Ligastart:** ${LEAGUE_INFO.startDate}`,
-    `**Manager:** ${LEAGUE_INFO.managers} Manager`,
-    `**Startkapital:** ${LEAGUE_INFO.startCapital}`,
-    `**Einsatz:** ${LEAGUE_INFO.entryFee}`,
-    `**Zahlung:** ${LEAGUE_INFO.payment}`,
-    "",
-    "---",
-    "",
-    "# 📜 Regelwerk",
-    "",
-    "## 👥 Kaderregeln",
-    "",
-    "### 1. Maximale Kadergröße",
-    "Jeder Manager darf maximal **16 Spieler im Kader** haben.",
-    "",
-    "Wer diese Grenze überschreitet, muss seinen Kader schnellstmöglich wieder auf maximal 16 Spieler reduzieren.",
-    "",
-    "### 2. Maximal 3 Spieler pro Verein",
-    "Pro Bundesliga-Verein dürfen maximal **3 Spieler** im eigenen Kader stehen.",
-    "",
-    "Beispiele: maximal **3 Bayern-Spieler**, maximal **3 Dortmund-Spieler**, maximal **3 Leverkusen-Spieler** usw.",
-    "",
-    "## 💰 Transferregeln",
-    "",
-    "### 3. Kein Underpay",
-    "**Underpay ist verboten.**",
-    "",
-    "Underpay bedeutet bei uns: Es darf **kein Spieler unter Marktwert verkauft werden**.",
-    "",
-    "Ein Spieler muss mindestens zum aktuellen **Marktwert** verkauft werden. Verkäufe unter Marktwert sind nicht erlaubt und können bestraft werden.",
-    "",
-    "### 4. Verkauf eines eigenen Top-5-Spielers pro Spieltag",
-    "Jeder Manager muss an jedem Spieltag **einen eigenen Top-5-Spieler verkaufen**.",
-    "",
-    "Mit **Top-5-Spieler** sind nicht die wertvollsten Spieler gemeint, sondern die **5 Spieler im eigenen Team, die an diesem Spieltag die meisten Punkte gemacht haben**.",
-    "",
-    "Aus diesen Top 5 muss nach dem Spieltag **ein Spieler verkauft werden**.",
-    "",
-    "## ⚖️ Fairplay & Verhalten",
-    "",
-    "Alle Manager spielen fair, aktiv und respektvoll.",
-    "",
-    "Nicht erlaubt sind:",
-    "• Absprachen zum Vorteil einzelner Manager",
-    "• absichtliches Pushen anderer Teams",
-    "• Marktmanipulation",
-    "• Verkäufe unter Marktwert",
-    "• Beleidigungen oder respektloses Verhalten",
-    "• bewusstes Ausnutzen von Schlupflöchern",
-    "",
-    "## 🟨 Strafen",
-    "",
-    "Ein genauer **Strafenkatalog folgt**.",
-    "",
-    "Mögliche Strafen können sein:",
-    "• Verwarnung",
-    "• Geldstrafe",
-    "• Pflichtverkauf",
-    "• interne Sanktionen",
-    "• Ausschluss aus der Liga",
-    "",
-    "Die Ligaleitung entscheidet je nach Fall und Schwere des Verstoßes.",
-    "",
-    "## 🚫 Ausschluss",
-    "",
-    "Ein Ausschluss kann erfolgen bei:",
-    "• **Inaktivität über 3 Spieltage**",
-    "• wiederholten Regelverstößen",
-    "• schweren Fairplay-Verstößen",
-    "• verweigerter Kommunikation mit der Ligaleitung",
-    "",
-    "Wer länger nicht aktiv sein kann, muss sich rechtzeitig bei der Ligaleitung melden.",
-    "",
-    "## 💬 Kommunikation",
-    "",
-    "Die komplette Liga-Kommunikation läuft über diesen **Discord-Server**.",
-    "",
-    "Jeder Manager ist dafür verantwortlich, regelmäßig in den Discord zu schauen.",
-    "",
-    "## ✅ Ziel der Liga",
-    "",
-    "Unser Ziel ist eine aktive, faire und kompetitive Kickbase-Liga mit zuverlässigen Managern, klaren Regeln und langfristigem Spielspaß.",
-    "",
-    "Viel Erfolg an alle Manager. 🔥",
-  ].join("\n");
+function isTop5Channel(interaction) {
+  return String(interaction.channelId || "") === String(TOP5_CHANNEL_ID);
 }
 
 function splitDescription(text, maxLength = 3900) {
@@ -138,14 +55,42 @@ function splitDescription(text, maxLength = 3900) {
   return chunks;
 }
 
+function buildRulesDescription() {
+  return [
+    `# 🟢 ${LEAGUE_INFO.name} | Saison ${LEAGUE_INFO.season}`,
+    "",
+    `**Start:** ${LEAGUE_INFO.startDate}`,
+    `**Manager:** ${LEAGUE_INFO.managers}`,
+    `**Startkapital:** ${LEAGUE_INFO.startCapital}`,
+    `**Einsatz:** ${LEAGUE_INFO.entryFee}`,
+    "",
+    "## 📜 Regeln",
+    "",
+    "### 👥 Kader",
+    "• Maximal **16 Spieler** im Kader.",
+    "• Maximal **3 Spieler pro Bundesliga-Verein**.",
+    "",
+    "### 💰 Transfers",
+    "• **Underpay ist verboten.** Kein Spieler darf unter Marktwert verkauft werden.",
+    "• Jeder Manager muss pro Spieltag einen eigenen **Top-5-Spieler** abgeben.",
+    "• Top-5 bedeutet: die 5 Spieler im eigenen Team, die an diesem Spieltag die meisten Punkte gemacht haben.",
+    "",
+    "### ⚖️ Fairplay",
+    "Nicht erlaubt sind Absprachen, Pushen, Marktmanipulation, Beleidigungen und bewusstes Ausnutzen von Schlupflöchern.",
+    "",
+    "### 🚫 Ausschluss",
+    "Ausschluss möglich bei Inaktivität über 3 Spieltage, wiederholten Regelverstößen oder schweren Fairplay-Verstößen.",
+    "",
+    "### 💬 Kommunikation",
+    "Die komplette Liga-Kommunikation läuft über diesen Discord-Server.",
+  ].join("\n");
+}
+
 function buildLeagueEmbed(interaction) {
   const settings = getGuildSettings(interaction.guildId);
   return buildKbbEmbed({
     title: `⚽ ${LEAGUE_INFO.name} | Saison ${LEAGUE_INFO.season}`,
     description: [
-      "**Liga-Übersicht**",
-      "",
-      `• **Saison:** ${LEAGUE_INFO.season}`,
       `• **Start:** ${LEAGUE_INFO.startDate}`,
       `• **Manager:** ${LEAGUE_INFO.managers}`,
       `• **Startkapital:** ${LEAGUE_INFO.startCapital}`,
@@ -155,6 +100,40 @@ function buildLeagueEmbed(interaction) {
       "**Discord Setup**",
       `• Rules Channel: ${settings.rulesChannelId ? `<#${settings.rulesChannelId}>` : "nicht gesetzt"}`,
       `• Announcement Channel: ${settings.announcementChannelId ? `<#${settings.announcementChannelId}>` : "nicht gesetzt"}`,
+      `• Top-5-Abgabe Channel: <#${TOP5_CHANNEL_ID}>`,
+    ].join("\n"),
+  });
+}
+
+function buildTop5SummaryEmbed(submissions) {
+  const list = submissions.map((entry, index) => (
+    `**${index + 1}.** <@${entry.userId}> — **${entry.playerName}** *(MW: noch nicht verfügbar)*`
+  ));
+
+  return buildKbbEmbed({
+    title: "✅ Top-5-Abgabe komplett",
+    description: [
+      `Alle **${TOP5_TARGET} Manager** haben ihre Top-5-Abgabe eingetragen.`,
+      "",
+      "## 📋 Zusammenfassung",
+      ...list,
+      "",
+      "Kickbase-Marktwerte sind vorbereitet, aber noch nicht automatisch angebunden.",
+    ].join("\n"),
+    footer: "187 KICKBASEBANDE • Top-5-Abgabe",
+  });
+}
+
+function buildTop5StatusEmbed(interaction) {
+  const submissions = getTop5Submissions(interaction.guildId);
+  return buildKbbEmbed({
+    title: "📊 Top-5-Abgabe Status",
+    description: [
+      `**Abgegeben:** ${submissions.length}/${TOP5_TARGET}`,
+      "",
+      submissions.length
+        ? submissions.map((entry, index) => `**${index + 1}.** <@${entry.userId}> — **${entry.playerName}**`).join("\n")
+        : "Noch keine Abgaben gespeichert.",
     ].join("\n"),
   });
 }
@@ -163,16 +142,17 @@ async function runHelp(interaction) {
   const embed = buildKbbEmbed({
     title: "📘 KBB Bot Help",
     description: [
-      "Der **KBB Bot** verwaltet Basisinformationen für die **187 KICKBASEBANDE**.",
-      "",
       "**Commands**",
       "• `/ping` — Bot-Status prüfen",
-      "• `/kbb help` — diese Übersicht anzeigen",
+      "• `/kbb help` — Übersicht anzeigen",
       "• `/kbb rules` — Regelwerk anzeigen",
       "• `/kbb league` — Liga-Infos anzeigen",
-      "• `/kbb setup` — Rules-/Announcement-Channel setzen *(Manage Server)*",
+      "• `/kbb setup` — Channels setzen",
+      "• `/kbb top5` — private Top-5-Abgabe starten",
+      "• `/kbb top5-status` — Abgabestand anzeigen",
+      "• `/kbb top5-reset` — neue Top-5-Runde starten",
       "",
-      "Weitere Module folgen: Strafenkatalog, Top-5-Erinnerung, Managerliste und Spieltagsverwaltung.",
+      `**Top-5-Abgabe Channel:** <#${TOP5_CHANNEL_ID}>`,
     ].join("\n"),
   });
 
@@ -180,8 +160,7 @@ async function runHelp(interaction) {
 }
 
 async function runRules(interaction) {
-  const descriptions = splitDescription(buildRulesDescription());
-  const embeds = descriptions.map((description, index) => buildKbbEmbed({
+  const embeds = splitDescription(buildRulesDescription()).map((description, index) => buildKbbEmbed({
     title: index === 0 ? "📜 KBB Regelwerk" : `📜 KBB Regelwerk — Teil ${index + 1}`,
     description,
   }));
@@ -193,77 +172,133 @@ async function runLeague(interaction) {
   return interaction.reply({ embeds: [buildLeagueEmbed(interaction)], ephemeral: true });
 }
 
-async function runSetup(interaction) {
-  if (!interaction.guildId) {
-    return interaction.reply({ embeds: [buildErrorEmbed("Dieser Command kann nur auf einem Server genutzt werden.")], ephemeral: true });
-  }
+async function runTop5(interaction) {
+  if (!interaction.guildId) return interaction.reply({ embeds: [buildErrorEmbed("Nur auf einem Server nutzbar.")], ephemeral: true });
+  if (!isTop5Channel(interaction)) return interaction.reply({ content: `❌ Top-5-Abgaben sind nur in <#${TOP5_CHANNEL_ID}> möglich.`, ephemeral: true });
 
-  if (!hasManageServerPermission(interaction)) {
-    return interaction.reply({ embeds: [buildErrorEmbed("Du brauchst **Manage Server** oder **Administrator**, um das KBB Setup zu ändern.")], ephemeral: true });
-  }
+  const existing = getTop5SubmissionForUser(interaction.guildId, interaction.user.id);
+  if (existing) return interaction.reply({ content: `✅ Du hast bereits **${existing.playerName}** abgegeben.`, ephemeral: true });
+
+  const modal = new ModalBuilder()
+    .setCustomId(`kbb_top5_submit:${interaction.guildId}:${interaction.user.id}`)
+    .setTitle("Top-5-Spieler abgeben");
+
+  const input = new TextInputBuilder()
+    .setCustomId("player_name")
+    .setLabel("Welchen Spieler gibst du ab?")
+    .setPlaceholder("z.B. Manuel Neuer")
+    .setStyle(TextInputStyle.Short)
+    .setMinLength(2)
+    .setMaxLength(80)
+    .setRequired(true);
+
+  modal.addComponents(new ActionRowBuilder().addComponents(input));
+  return interaction.showModal(modal);
+}
+
+async function runTop5Status(interaction) {
+  if (!interaction.guildId) return interaction.reply({ embeds: [buildErrorEmbed("Nur auf einem Server nutzbar.")], ephemeral: true });
+  return interaction.reply({ embeds: [buildTop5StatusEmbed(interaction)], ephemeral: true });
+}
+
+async function runTop5Reset(interaction) {
+  if (!interaction.guildId) return interaction.reply({ embeds: [buildErrorEmbed("Nur auf einem Server nutzbar.")], ephemeral: true });
+  if (!hasManageServerPermission(interaction)) return interaction.reply({ embeds: [buildErrorEmbed("Du brauchst Manage Server oder Administrator.")], ephemeral: true });
+
+  const result = resetTop5Round(interaction.guildId, interaction.user);
+  if (!result.ok) return interaction.reply({ embeds: [buildErrorEmbed(result.error || "Reset fehlgeschlagen.")], ephemeral: true });
+
+  return interaction.reply({ embeds: [buildSuccessEmbed("🔄 Top-5-Runde zurückgesetzt", `Neue Runde gestartet. Channel: <#${TOP5_CHANNEL_ID}>`)], ephemeral: true });
+}
+
+async function runSetup(interaction) {
+  if (!interaction.guildId) return interaction.reply({ embeds: [buildErrorEmbed("Nur auf einem Server nutzbar.")], ephemeral: true });
+  if (!hasManageServerPermission(interaction)) return interaction.reply({ embeds: [buildErrorEmbed("Du brauchst Manage Server oder Administrator.")], ephemeral: true });
 
   const rulesChannel = interaction.options.getChannel("rules_channel");
   const announcementChannel = interaction.options.getChannel("announcement_channel");
-
   const payload = {};
+
   if (rulesChannel) payload.rulesChannelId = rulesChannel.id;
   if (announcementChannel) payload.announcementChannelId = announcementChannel.id;
-
-  if (!Object.keys(payload).length) {
-    return interaction.reply({ embeds: [buildErrorEmbed("Bitte mindestens einen Channel auswählen.")], ephemeral: true });
-  }
+  if (!Object.keys(payload).length) return interaction.reply({ embeds: [buildErrorEmbed("Bitte mindestens einen Channel auswählen.")], ephemeral: true });
 
   const ok = setGuildSettings(interaction.guildId, payload);
-  if (!ok) {
-    return interaction.reply({ embeds: [buildErrorEmbed("Setup konnte nicht gespeichert werden.")], ephemeral: true });
-  }
+  if (!ok) return interaction.reply({ embeds: [buildErrorEmbed("Setup konnte nicht gespeichert werden.")], ephemeral: true });
 
   const settings = getGuildSettings(interaction.guildId);
-  const embed = buildSuccessEmbed("✅ KBB Setup gespeichert", [
-    "Das Server-Setup wurde gespeichert.",
-    "",
-    `**Rules Channel:** ${settings.rulesChannelId ? `<#${settings.rulesChannelId}>` : "nicht gesetzt"}`,
-    `**Announcement Channel:** ${settings.announcementChannelId ? `<#${settings.announcementChannelId}>` : "nicht gesetzt"}`,
-  ].join("\n"));
+  return interaction.reply({
+    embeds: [buildSuccessEmbed("✅ KBB Setup gespeichert", [
+      `**Rules Channel:** ${settings.rulesChannelId ? `<#${settings.rulesChannelId}>` : "nicht gesetzt"}`,
+      `**Announcement Channel:** ${settings.announcementChannelId ? `<#${settings.announcementChannelId}>` : "nicht gesetzt"}`,
+      `**Top-5-Abgabe Channel:** <#${TOP5_CHANNEL_ID}>`,
+    ].join("\n"))],
+    ephemeral: true,
+  });
+}
 
-  return interaction.reply({ embeds: [embed], ephemeral: true });
+async function handleTop5ModalSubmit(interaction) {
+  const [, guildId, userId] = String(interaction.customId || "").split(":");
+  if (guildId !== interaction.guildId || userId !== interaction.user.id) {
+    await interaction.reply({ content: "❌ Diese Top-5-Abgabe gehört nicht zu dir.", ephemeral: true });
+    return true;
+  }
+  if (!isTop5Channel(interaction)) {
+    await interaction.reply({ content: `❌ Top-5-Abgaben sind nur in <#${TOP5_CHANNEL_ID}> möglich.`, ephemeral: true });
+    return true;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const playerName = interaction.fields.getTextInputValue("player_name");
+  const result = addTop5Submission(interaction.guildId, interaction.user, playerName, null, TOP5_TARGET);
+
+  if (!result.ok) {
+    const message = result.duplicate ? `✅ Du hast bereits **${result.submission.playerName}** abgegeben.` : `❌ ${result.error || "Speichern fehlgeschlagen."}`;
+    await interaction.editReply({ content: message });
+    return true;
+  }
+
+  await interaction.channel?.send({ content: `Manager: ${interaction.user} hat **${result.submission.playerName}** abgegeben.` }).catch(() => null);
+
+  if (result.complete) {
+    await interaction.channel?.send({ embeds: [buildTop5SummaryEmbed(result.submissions)] }).catch(() => null);
+  }
+
+  await interaction.editReply({ content: `✅ Abgabe gespeichert: **${result.submission.playerName}** (${result.count}/${result.target})` });
+  return true;
 }
 
 export default {
   data: new SlashCommandBuilder()
     .setName("kbb")
     .setDescription("187 KICKBASEBANDE league commands")
-    .addSubcommand(sub => sub
-      .setName("help")
-      .setDescription("Show KBB bot help"))
-    .addSubcommand(sub => sub
-      .setName("rules")
-      .setDescription("Post the 187 KICKBASEBANDE rulebook"))
-    .addSubcommand(sub => sub
-      .setName("league")
-      .setDescription("Show league information"))
+    .addSubcommand(sub => sub.setName("help").setDescription("Show KBB bot help"))
+    .addSubcommand(sub => sub.setName("rules").setDescription("Post the rulebook"))
+    .addSubcommand(sub => sub.setName("league").setDescription("Show league information"))
+    .addSubcommand(sub => sub.setName("top5").setDescription("Private Top-5 player submission"))
+    .addSubcommand(sub => sub.setName("top5-status").setDescription("Show Top-5 submission progress"))
+    .addSubcommand(sub => sub.setName("top5-reset").setDescription("Reset Top-5 submissions"))
     .addSubcommand(sub => sub
       .setName("setup")
       .setDescription("Configure KBB server channels")
-      .addChannelOption(option => option
-        .setName("rules_channel")
-        .setDescription("Channel for league rules")
-        .addChannelTypes(ChannelType.GuildText)
-        .setRequired(false))
-      .addChannelOption(option => option
-        .setName("announcement_channel")
-        .setDescription("Channel for league announcements")
-        .addChannelTypes(ChannelType.GuildText)
-        .setRequired(false))),
+      .addChannelOption(option => option.setName("rules_channel").setDescription("Channel for league rules").addChannelTypes(ChannelType.GuildText).setRequired(false))
+      .addChannelOption(option => option.setName("announcement_channel").setDescription("Channel for league announcements").addChannelTypes(ChannelType.GuildText).setRequired(false))),
 
   async execute(interaction) {
     const sub = interaction.options.getSubcommand(false) || "help";
-
     if (sub === "help") return runHelp(interaction);
     if (sub === "rules") return runRules(interaction);
     if (sub === "league") return runLeague(interaction);
     if (sub === "setup") return runSetup(interaction);
-
+    if (sub === "top5") return runTop5(interaction);
+    if (sub === "top5-status") return runTop5Status(interaction);
+    if (sub === "top5-reset") return runTop5Reset(interaction);
     return runHelp(interaction);
+  },
+
+  async handleModalSubmit(interaction) {
+    if (!interaction.customId?.startsWith("kbb_top5_submit:")) return false;
+    return handleTop5ModalSubmit(interaction);
   },
 };
