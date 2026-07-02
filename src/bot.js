@@ -5,7 +5,7 @@ import {
   GatewayIntentBits,
 } from "discord.js";
 
-import { registerConfiguredCommands } from "./registerCommands.js";
+import { registerConfiguredCommands, registerCommandsForGuild } from "./registerCommands.js";
 import pingCommand from "./commands/ping.js";
 import kbbCommand from "./commands/kbb.js";
 
@@ -33,7 +33,7 @@ client.once(Events.ClientReady, async () => {
 client.on(Events.GuildCreate, async (guild) => {
   try {
     console.log(`➕ KBB Bot joined guild: ${guild.name} (${guild.id})`);
-    await registerConfiguredCommands(client);
+    await registerCommandsForGuild(guild.id);
   } catch (err) {
     console.error("❌ Failed to register commands after guild join:", err?.message || err);
   }
