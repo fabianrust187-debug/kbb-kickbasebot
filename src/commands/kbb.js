@@ -38,6 +38,10 @@ function isTop5Channel(interaction) {
   return String(interaction.channelId || "") === String(TOP5_CHANNEL_ID);
 }
 
+function normalizeNickname(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
 function splitDescription(text, maxLength = 3900) {
   const chunks = [];
   let current = "";
@@ -147,6 +151,7 @@ async function runHelp(interaction) {
       "• `/kbb help` — Übersicht anzeigen",
       "• `/kbb rules` — Regelwerk anzeigen",
       "• `/kbb league` — Liga-Infos anzeigen",
+      "• `/kbb name nickname:<Kickbase-Name>` — Discord-Nickname setzen",
       "• `/kbb setup` — Channels setzen",
       "• `/kbb top5` — private Top-5-Abgabe starten",
       "• `/kbb top5-status` — Abgabestand anzeigen",
@@ -170,6 +175,48 @@ async function runRules(interaction) {
 
 async function runLeague(interaction) {
   return interaction.reply({ embeds: [buildLeagueEmbed(interaction)], ephemeral: true });
+}
+
+async function runName(interaction) {
+  if (!interaction.guildId || !interaction.guild) {
+    return interaction.reply({ embeds: [buildErrorEmbed("Nur auf einem Server nutzbar.")], ephemeral: true });
+  }
+
+  const nickname = normalizeNickname(interaction.options.getString("nickname", true));
+  if (nickname.length < 2 || nickname.length > 32) {
+    return interaction.reply({ embeds: [buildErrorEmbed("Der Kickbase-Name muss zwischen 2 und 32 Zeichen lang sein.")], ephemeral: true });
+  }
+
+  const botMember = interaction.guild.members.me || await interaction.guild.members.fetchMe().catch(() => null);
+  if (!botMember?.permissions?.has(PermissionFlagsBits.ManageNicknames)) {
+    return interaction.reply({
+      embeds: [buildErrorEmbed("Mir fehlt die Discord-Berechtigung **Nicknames verwalten**.")],
+      ephemeral: true,
+    });
+  }
+
+  const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+  if (!member) {
+    return interaction.reply({ embeds: [buildErrorEmbed("Dein Server-Profil konnte nicht geladen werden.")], ephemeral: true });
+  }
+
+  if (!member.manageable) {
+    return interaction.reply({
+      embeds: [buildErrorEmbed("Ich kann deinen Nickname nicht ändern. Vermutlich steht deine Rolle über meiner Bot-Rolle oder du bist Server-Owner.")],
+      ephemeral: true,
+    });
+  }
+
+  await member.setNickname(nickname, "KBB Kickbase nickname sync").catch(async () => {
+    await interaction.reply({ embeds: [buildErrorEmbed("Nickname konnte nicht geändert werden. Bitte Bot-Rolle und Berechtigungen prüfen.")], ephemeral: true });
+  });
+
+  if (interaction.replied) return null;
+
+  return interaction.reply({
+    embeds: [buildSuccessEmbed("✅ Nickname gesetzt", `Dein Discord-Name wurde auf **${nickname}** gesetzt.`)],
+    ephemeral: true,
+  });
 }
 
 async function runTop5(interaction) {
@@ -276,6 +323,15 @@ export default {
     .addSubcommand(sub => sub.setName("help").setDescription("Show KBB bot help"))
     .addSubcommand(sub => sub.setName("rules").setDescription("Post the rulebook"))
     .addSubcommand(sub => sub.setName("league").setDescription("Show league information"))
+    .addSubcommand(sub => sub
+      .setName("name")
+      .setDescription("Set your Discord nickname to your Kickbase name")
+      .addStringOption(option => option
+        .setName("nickname")
+        .setDescription("Your Kickbase account name")
+        .setRequired(true)
+        .setMinLength(2)
+        .setMaxLength(32)))
     .addSubcommand(sub => sub.setName("top5").setDescription("Private Top-5 player submission"))
     .addSubcommand(sub => sub.setName("top5-status").setDescription("Show Top-5 submission progress"))
     .addSubcommand(sub => sub.setName("top5-reset").setDescription("Reset Top-5 submissions"))
@@ -290,6 +346,7 @@ export default {
     if (sub === "help") return runHelp(interaction);
     if (sub === "rules") return runRules(interaction);
     if (sub === "league") return runLeague(interaction);
+    if (sub === "name") return runName(interaction);
     if (sub === "setup") return runSetup(interaction);
     if (sub === "top5") return runTop5(interaction);
     if (sub === "top5-status") return runTop5Status(interaction);
