@@ -1,5 +1,21 @@
 # KBB Kickbase Bot — Changelog
 
+## Version 0.3.0 — Kickbase Nickname Sync
+
+### New Features
+
+- Added `/kbb name nickname:<Kickbase-Name>`.
+- Managers can now set their own Discord server nickname to their Kickbase account name.
+- The command normalizes extra spaces and validates Discord's nickname length limit.
+- The bot checks whether it has the required **Manage Nicknames** permission before changing a nickname.
+- If Discord blocks the rename because of role hierarchy or server ownership, the bot returns a clear private error message.
+
+### Notes
+
+- The bot role must be above normal member roles in the Discord role hierarchy.
+- The bot needs the Discord permission **Manage Nicknames / Nicknames verwalten**.
+- The confirmation and error messages are ephemeral, so the channel stays clean.
+
 ## Version 0.2.0 — Top-5 Submission Workflow
 
 ### New Features
