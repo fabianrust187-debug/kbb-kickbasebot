@@ -42,6 +42,12 @@ function normalizeNickname(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
+function escapeDiscordText(value) {
+  return String(value || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/([*_~`>|])/g, "\\$1");
+}
+
 function splitDescription(text, maxLength = 3900) {
   const chunks = [];
   let current = "";
@@ -298,6 +304,7 @@ async function handleNameModalSubmit(interaction) {
     return true;
   }
 
+  const previousName = member.displayName;
   const changed = await member.setNickname(nickname, "KBB Kickbase nickname sync")
     .then(() => true)
     .catch(() => false);
@@ -306,6 +313,11 @@ async function handleNameModalSubmit(interaction) {
     await interaction.editReply({ embeds: [buildErrorEmbed("Nickname konnte nicht geändert werden. Bitte Bot-Rolle und Berechtigungen prüfen.")] });
     return true;
   }
+
+  await interaction.channel?.send({
+    content: `🔄 <@${interaction.user.id}> hieß vorher **${escapeDiscordText(previousName)}** und heißt jetzt **${escapeDiscordText(nickname)}**.`,
+    allowedMentions: { users: [interaction.user.id], parse: [] },
+  }).catch(() => null);
 
   await interaction.editReply({
     embeds: [buildSuccessEmbed("✅ Server-Nickname gesetzt", `Dein Name auf diesem Discord-Server wurde auf **${nickname}** gesetzt.`)],
