@@ -151,7 +151,7 @@ async function runHelp(interaction) {
       "• `/kbb help` — Übersicht anzeigen",
       "• `/kbb rules` — Regelwerk anzeigen",
       "• `/kbb league` — Liga-Infos anzeigen",
-      "• `/kbb name nickname:<Kickbase-Name>` — Discord-Nickname setzen",
+      "• `/kbb name` — Kickbase-Namen in einem privaten Fenster eintragen",
       "• `/kbb setup` — Channels setzen",
       "• `/kbb top5` — private Top-5-Abgabe starten",
       "• `/kbb top5-status` — Abgabestand anzeigen",
@@ -182,41 +182,21 @@ async function runName(interaction) {
     return interaction.reply({ embeds: [buildErrorEmbed("Nur auf einem Server nutzbar.")], ephemeral: true });
   }
 
-  const nickname = normalizeNickname(interaction.options.getString("nickname", true));
-  if (nickname.length < 2 || nickname.length > 32) {
-    return interaction.reply({ embeds: [buildErrorEmbed("Der Kickbase-Name muss zwischen 2 und 32 Zeichen lang sein.")], ephemeral: true });
-  }
+  const modal = new ModalBuilder()
+    .setCustomId(`kbb_name_submit:${interaction.guildId}:${interaction.user.id}`)
+    .setTitle("Kickbase-Namen eintragen");
 
-  const botMember = interaction.guild.members.me || await interaction.guild.members.fetchMe().catch(() => null);
-  if (!botMember?.permissions?.has(PermissionFlagsBits.ManageNicknames)) {
-    return interaction.reply({
-      embeds: [buildErrorEmbed("Mir fehlt die Discord-Berechtigung **Nicknames verwalten**.")],
-      ephemeral: true,
-    });
-  }
+  const input = new TextInputBuilder()
+    .setCustomId("kickbase_name")
+    .setLabel("Wie heißt du bei Kickbase?")
+    .setPlaceholder("z. B. Vegetarox")
+    .setStyle(TextInputStyle.Short)
+    .setMinLength(2)
+    .setMaxLength(32)
+    .setRequired(true);
 
-  const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
-  if (!member) {
-    return interaction.reply({ embeds: [buildErrorEmbed("Dein Server-Profil konnte nicht geladen werden.")], ephemeral: true });
-  }
-
-  if (!member.manageable) {
-    return interaction.reply({
-      embeds: [buildErrorEmbed("Ich kann deinen Nickname nicht ändern. Vermutlich steht deine Rolle über meiner Bot-Rolle oder du bist Server-Owner.")],
-      ephemeral: true,
-    });
-  }
-
-  await member.setNickname(nickname, "KBB Kickbase nickname sync").catch(async () => {
-    await interaction.reply({ embeds: [buildErrorEmbed("Nickname konnte nicht geändert werden. Bitte Bot-Rolle und Berechtigungen prüfen.")], ephemeral: true });
-  });
-
-  if (interaction.replied) return null;
-
-  return interaction.reply({
-    embeds: [buildSuccessEmbed("✅ Nickname gesetzt", `Dein Discord-Name wurde auf **${nickname}** gesetzt.`)],
-    ephemeral: true,
-  });
+  modal.addComponents(new ActionRowBuilder().addComponents(input));
+  return interaction.showModal(modal);
 }
 
 async function runTop5(interaction) {
@@ -284,6 +264,55 @@ async function runSetup(interaction) {
   });
 }
 
+async function handleNameModalSubmit(interaction) {
+  const [, guildId, userId] = String(interaction.customId || "").split(":");
+  if (guildId !== interaction.guildId || userId !== interaction.user.id) {
+    await interaction.reply({ content: "❌ Dieses Namensformular gehört nicht zu dir.", ephemeral: true });
+    return true;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const nickname = normalizeNickname(interaction.fields.getTextInputValue("kickbase_name"));
+  if (nickname.length < 2 || nickname.length > 32) {
+    await interaction.editReply({ embeds: [buildErrorEmbed("Der Kickbase-Name muss zwischen 2 und 32 Zeichen lang sein.")] });
+    return true;
+  }
+
+  const botMember = interaction.guild?.members.me || await interaction.guild?.members.fetchMe().catch(() => null);
+  if (!botMember?.permissions?.has(PermissionFlagsBits.ManageNicknames)) {
+    await interaction.editReply({ embeds: [buildErrorEmbed("Mir fehlt die Discord-Berechtigung **Nicknames verwalten**.")] });
+    return true;
+  }
+
+  const member = await interaction.guild?.members.fetch(interaction.user.id).catch(() => null);
+  if (!member) {
+    await interaction.editReply({ embeds: [buildErrorEmbed("Dein Server-Profil konnte nicht geladen werden.")] });
+    return true;
+  }
+
+  if (!member.manageable) {
+    await interaction.editReply({
+      embeds: [buildErrorEmbed("Ich kann deinen Server-Nickname nicht ändern. Vermutlich steht deine Rolle über meiner Bot-Rolle oder du bist Server-Owner.")],
+    });
+    return true;
+  }
+
+  const changed = await member.setNickname(nickname, "KBB Kickbase nickname sync")
+    .then(() => true)
+    .catch(() => false);
+
+  if (!changed) {
+    await interaction.editReply({ embeds: [buildErrorEmbed("Nickname konnte nicht geändert werden. Bitte Bot-Rolle und Berechtigungen prüfen.")] });
+    return true;
+  }
+
+  await interaction.editReply({
+    embeds: [buildSuccessEmbed("✅ Server-Nickname gesetzt", `Dein Name auf diesem Discord-Server wurde auf **${nickname}** gesetzt.`)],
+  });
+  return true;
+}
+
 async function handleTop5ModalSubmit(interaction) {
   const [, guildId, userId] = String(interaction.customId || "").split(":");
   if (guildId !== interaction.guildId || userId !== interaction.user.id) {
@@ -323,15 +352,7 @@ export default {
     .addSubcommand(sub => sub.setName("help").setDescription("Show KBB bot help"))
     .addSubcommand(sub => sub.setName("rules").setDescription("Post the rulebook"))
     .addSubcommand(sub => sub.setName("league").setDescription("Show league information"))
-    .addSubcommand(sub => sub
-      .setName("name")
-      .setDescription("Set your Discord nickname to your Kickbase name")
-      .addStringOption(option => option
-        .setName("nickname")
-        .setDescription("Your Kickbase account name")
-        .setRequired(true)
-        .setMinLength(2)
-        .setMaxLength(32)))
+    .addSubcommand(sub => sub.setName("name").setDescription("Open a private form for your Kickbase name"))
     .addSubcommand(sub => sub.setName("top5").setDescription("Private Top-5 player submission"))
     .addSubcommand(sub => sub.setName("top5-status").setDescription("Show Top-5 submission progress"))
     .addSubcommand(sub => sub.setName("top5-reset").setDescription("Reset Top-5 submissions"))
@@ -355,7 +376,8 @@ export default {
   },
 
   async handleModalSubmit(interaction) {
-    if (!interaction.customId?.startsWith("kbb_top5_submit:")) return false;
-    return handleTop5ModalSubmit(interaction);
+    if (interaction.customId?.startsWith("kbb_name_submit:")) return handleNameModalSubmit(interaction);
+    if (interaction.customId?.startsWith("kbb_top5_submit:")) return handleTop5ModalSubmit(interaction);
+    return false;
   },
 };
