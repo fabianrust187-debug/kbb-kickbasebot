@@ -1,5 +1,15 @@
 # KBB Kickbase Bot — Changelog
 
+## Version 0.3.2 — Public Nickname Change Notice
+
+### Changed
+
+- After a successful `/kbb name` submission, the bot now posts a public message in the same channel.
+- The message shows the manager mention, the previous server name and the new Kickbase name.
+- The private confirmation remains visible only to the manager who submitted the form.
+- Nicknames are escaped before posting so formatting characters cannot break the announcement.
+- Mentions are restricted to the renamed manager to prevent unwanted mass mentions.
+
 ## Version 0.3.1 — Kickbase Name Modal
 
 ### Changed
