@@ -1,5 +1,22 @@
 # KBB Kickbase Bot — Changelog
 
+## Version 0.3.1 — Kickbase Name Modal
+
+### Changed
+
+- `/kbb name` no longer requires a `nickname:` parameter.
+- Running `/kbb name` now opens a private Discord input window.
+- Managers enter their Kickbase account name in the modal and confirm it there.
+- The bot changes only the nickname on the **187 KICKBASEBANDE Discord server**.
+- The global Discord username, display name and names on other servers remain unchanged.
+- `/kbb help` was updated to explain the new workflow.
+
+### Permissions
+
+- The bot needs **Manage Nicknames / Nicknames verwalten**.
+- The bot role must be above the member role it should rename.
+- Discord does not allow the bot to rename the server owner or members above its role.
+
 ## Version 0.3.0 — Kickbase Nickname Sync
 
 ### New Features
