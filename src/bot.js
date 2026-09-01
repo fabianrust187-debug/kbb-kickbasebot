@@ -8,6 +8,7 @@ import {
 import { registerConfiguredCommands, registerCommandsForGuild } from "./registerCommands.js";
 import pingCommand from "./commands/ping.js";
 import kbbCommand from "./commands/kbb.js";
+import { startTop5DeadlineScheduler } from "./utils/top5Deadline.js";
 
 const client = new Client({
   intents: [
@@ -28,6 +29,9 @@ client.once(Events.ClientReady, async () => {
   } catch (err) {
     console.error("❌ Slash command registration failed:", err?.message || err);
   }
+
+  startTop5DeadlineScheduler(client);
+  console.log("⏰ Top-5 deadline scheduler active: Monday 22:00 Europe/Berlin");
 });
 
 client.on(Events.GuildCreate, async (guild) => {
