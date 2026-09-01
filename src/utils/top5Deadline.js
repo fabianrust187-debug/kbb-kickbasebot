@@ -1,10 +1,11 @@
 import { getGuildSettings, setGuildSettings } from "./guildSettings.js";
 import { getManagers } from "./managerStore.js";
-import { getTop5Submissions, resetTop5Round } from "./top5Store.js";
+import { getTop5Round, getTop5Submissions, resetTop5Round } from "./top5Store.js";
 
 const DEFAULT_TOP5_CHANNEL_ID = process.env.TOP5_CHANNEL_ID || "1522249357179617331";
 const DEFAULT_TARGET = Number(process.env.TOP5_MANAGER_TARGET || 14);
 const TIME_ZONE = "Europe/Berlin";
+const WEEKDAY_INDEX = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
 
 function berlinParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-GB", {
@@ -21,65 +22,148 @@ function berlinParts(date = new Date()) {
   const map = Object.fromEntries(parts.map(part => [part.type, part.value]));
   return {
     weekday: map.weekday,
-    year: map.year,
-    month: map.month,
-    day: map.day,
+    year: Number(map.year),
+    month: Number(map.month),
+    day: Number(map.day),
     hour: Number(map.hour),
     minute: Number(map.minute),
   };
 }
 
-function deadlineKey(parts) {
-  return `${parts.year}-${parts.month}-${parts.day}`;
+function localDateKey(parts) {
+  return `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
 }
 
-export function getMissingTop5Managers(guildId, target = DEFAULT_TARGET) {
+function localMinuteKey(parts) {
+  return `${localDateKey(parts)}T${String(parts.hour).padStart(2, "0")}:${String(parts.minute).padStart(2, "0")}`;
+}
+
+function addLocalDays(parts, days) {
+  const value = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + days));
+  return {
+    year: value.getUTCFullYear(),
+    month: value.getUTCMonth() + 1,
+    day: value.getUTCDate(),
+  };
+}
+
+export function getRoundDeadline(guildId) {
+  const round = getTop5Round(guildId);
+  if (!round?.createdAt) return null;
+
+  const created = berlinParts(new Date(round.createdAt));
+  const weekday = WEEKDAY_INDEX[created.weekday] ?? 0;
+  let daysUntilMonday = (7 - weekday) % 7;
+
+  // If a round begins on Monday after the 22:00 deadline, its deadline is next Monday.
+  if (daysUntilMonday === 0 && (created.hour > 22 || (created.hour === 22 && created.minute > 0))) {
+    daysUntilMonday = 7;
+  }
+
+  const date = addLocalDays(created, daysUntilMonday);
+  const deadlineParts = { ...date, weekday: "Mon", hour: 22, minute: 0 };
+
+  return {
+    ...deadlineParts,
+    key: localMinuteKey(deadlineParts),
+    dateKey: localDateKey(deadlineParts),
+    label: `${String(deadlineParts.day).padStart(2, "0")}.${String(deadlineParts.month).padStart(2, "0")}.${deadlineParts.year} um 22:00 Uhr`,
+  };
+}
+
+export function getMissingTop5Managers(guildId, target = DEFAULT_TARGET, now = new Date()) {
   const managers = getManagers(guildId);
   const submissions = getTop5Submissions(guildId);
-  const submittedIds = new Set(submissions.map(entry => String(entry.userId)));
-  const missing = managers.filter(manager => !submittedIds.has(String(manager.userId)));
+  const deadline = getRoundDeadline(guildId);
+  const nowKey = localMinuteKey(berlinParts(now));
+  const deadlinePassed = !!deadline && nowKey >= deadline.key;
+  const byUser = new Map(submissions.map(entry => [String(entry.userId), entry]));
+
+  const missing = [];
+  const late = [];
+  const timely = [];
+
+  for (const manager of managers) {
+    const submission = byUser.get(String(manager.userId));
+    if (!submission) {
+      missing.push(manager);
+      continue;
+    }
+
+    if (deadlinePassed && deadline) {
+      const submittedKey = localMinuteKey(berlinParts(new Date(submission.createdAt)));
+      if (submittedKey > deadline.key) {
+        late.push({ ...manager, submission, submittedKey });
+        continue;
+      }
+    }
+
+    timely.push({ ...manager, submission });
+  }
+
+  const failed = [...missing, ...late];
 
   return {
     managers,
     submissions,
     missing,
+    late,
+    timely,
+    failed,
+    deadline,
+    deadlinePassed,
     target,
     rosterComplete: managers.length === target,
   };
 }
 
+function formatSubmissionTime(createdAt) {
+  const parts = berlinParts(new Date(createdAt));
+  return `${String(parts.hour).padStart(2, "0")}:${String(parts.minute).padStart(2, "0")} Uhr`;
+}
+
 export function buildMissingTop5Message(result, { automatic = false } = {}) {
   const heading = automatic
     ? "## ⏰ Top-5-Abgabefrist beendet"
-    : "## 📋 Top-5-Abgabe – fehlende Manager";
+    : "## 📋 Top-5-Fristprüfung";
 
-  if (!result.missing.length) {
+  if (!result.failed.length) {
     return [
       heading,
       "",
-      `✅ Alle **${result.managers.length} Manager** haben ihre Top-5-Abgabe rechtzeitig eingereicht.`,
+      result.deadlinePassed && result.deadline
+        ? `✅ Alle **${result.managers.length} Manager** haben bis **${result.deadline.label}** rechtzeitig abgegeben.`
+        : `✅ Aktuell haben alle **${result.managers.length} Manager** ihre Top-5-Abgabe eingereicht.`,
       automatic ? "\n🔄 Die nächste Top-5-Runde wurde automatisch gestartet." : "",
     ].filter(Boolean).join("\n");
   }
 
-  return [
-    heading,
-    "",
-    automatic
-      ? "Folgende Manager haben bis **Montag, 22:00 Uhr** keine Top-5-Abgabe eingereicht:"
-      : "Folgende Manager haben aktuell noch keine Top-5-Abgabe eingereicht:",
-    "",
-    ...result.missing.map((manager, index) => `**${index + 1}.** <@${manager.userId}>`),
-    "",
-    `❌ **${result.missing.length}/${result.managers.length}** Abgaben fehlen.`,
-    automatic ? "\n🔄 Die nächste Top-5-Runde wurde automatisch gestartet." : "",
-  ].filter(Boolean).join("\n");
+  const lines = [heading, ""];
+
+  if (result.deadlinePassed && result.deadline) {
+    lines.push(`Folgende Manager haben bis **${result.deadline.label}** nicht rechtzeitig abgegeben:`, "");
+  } else {
+    lines.push("Folgende Manager haben aktuell noch keine Top-5-Abgabe eingereicht:", "");
+  }
+
+  let index = 1;
+  for (const manager of result.missing) {
+    lines.push(`**${index++}.** <@${manager.userId}> — **keine Abgabe**`);
+  }
+  for (const manager of result.late) {
+    lines.push(`**${index++}.** <@${manager.userId}> — **zu spät** (${formatSubmissionTime(manager.submission.createdAt)})`);
+  }
+
+  lines.push("", `❌ **${result.failed.length}/${result.managers.length} Manager** haben nicht rechtzeitig abgegeben.`);
+  if (automatic) lines.push("", "🔄 Die nächste Top-5-Runde wurde automatisch gestartet.");
+
+  return lines.join("\n");
 }
 
-export async function publishMissingTop5(guild, { automatic = false, resetAfter = false } = {}) {
+export async function publishMissingTop5(guild, { automatic = false, resetAfter = false, now = new Date() } = {}) {
   const settings = getGuildSettings(guild.id);
   const target = Number(process.env.TOP5_MANAGER_TARGET || DEFAULT_TARGET);
-  const result = getMissingTop5Managers(guild.id, target);
+  const result = getMissingTop5Managers(guild.id, target, now);
 
   if (!result.rosterComplete) {
     return {
@@ -98,7 +182,7 @@ export async function publishMissingTop5(guild, { automatic = false, resetAfter 
   const content = buildMissingTop5Message(result, { automatic });
   const message = await channel.send({
     content,
-    allowedMentions: { users: result.missing.map(manager => manager.userId), parse: [] },
+    allowedMentions: { users: result.failed.map(manager => manager.userId), parse: [] },
   }).catch(() => null);
 
   if (!message) return { ok: false, error: "Fristmeldung konnte nicht gesendet werden.", result };
@@ -113,20 +197,23 @@ export async function publishMissingTop5(guild, { automatic = false, resetAfter 
 
 async function checkGuild(guild, now = new Date()) {
   const parts = berlinParts(now);
-  if (parts.weekday !== "Mon" || parts.hour !== 22) return;
+  const result = getMissingTop5Managers(guild.id, Number(process.env.TOP5_MANAGER_TARGET || DEFAULT_TARGET), now);
+  const deadline = result.deadline;
 
-  const key = deadlineKey(parts);
+  if (!deadline || parts.weekday !== "Mon" || parts.hour < 22) return;
+  if (localDateKey(parts) !== deadline.dateKey) return;
+
   const settings = getGuildSettings(guild.id);
-  if (settings.lastTop5DeadlineKey === key) return;
+  if (settings.lastTop5DeadlineKey === deadline.dateKey) return;
 
-  const result = await publishMissingTop5(guild, { automatic: true, resetAfter: true });
-  if (!result.ok) {
-    console.warn(`⚠️ Top-5 deadline skipped for ${guild.id}: ${result.error}`);
+  const published = await publishMissingTop5(guild, { automatic: true, resetAfter: true, now });
+  if (!published.ok) {
+    console.warn(`⚠️ Top-5 deadline skipped for ${guild.id}: ${published.error}`);
     return;
   }
 
   setGuildSettings(guild.id, {
-    lastTop5DeadlineKey: key,
+    lastTop5DeadlineKey: deadline.dateKey,
     lastTop5DeadlineAt: new Date().toISOString(),
   });
   console.log(`✅ Top-5 deadline posted for ${guild.name} (${guild.id})`);
