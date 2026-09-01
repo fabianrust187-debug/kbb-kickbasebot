@@ -156,7 +156,10 @@ function buildTop5StatusEmbed(interaction) {
       submissions.length
         ? submissions.map((entry, index) => `**${index + 1}.** <@${entry.userId}> — **${entry.playerName}**`).join("\n")
         : "Noch keine Abgaben gespeichert.",
-    ].join("\n"),
+      managers.length < TOP5_TARGET
+        ? `\n⚠️ ${TOP5_TARGET - managers.length} Teilnehmer noch nicht in der Managerliste. Die Fristprüfung funktioniert trotzdem.`
+        : "",
+    ].filter(Boolean).join("\n"),
   });
 }
 
@@ -224,8 +227,16 @@ async function runTop5(interaction) {
   if (!isTop5Channel(interaction)) return interaction.reply({ content: `❌ Top-5-Abgaben sind nur in <#${top5ChannelId}> möglich.`, ephemeral: true });
 
   const managers = getManagers(interaction.guildId);
-  if (managers.length && !managers.some(manager => manager.userId === interaction.user.id)) {
-    return interaction.reply({ content: "❌ Du bist nicht in der KBB-Managerliste eingetragen.", ephemeral: true });
+  const registered = managers.some(manager => manager.userId === interaction.user.id);
+  if (!registered) {
+    if (managers.length >= TOP5_TARGET) {
+      return interaction.reply({ content: "❌ Die KBB-Managerliste ist bereits vollständig und du bist dort nicht eingetragen.", ephemeral: true });
+    }
+
+    const added = addManager(interaction.guildId, interaction.user, interaction.user);
+    if (!added.ok && !added.duplicate) {
+      return interaction.reply({ content: "❌ Deine Top-5-Abgabe konnte nicht vorbereitet werden. Bitte kurz bei der Ligaleitung melden.", ephemeral: true });
+    }
   }
 
   const existing = getTop5SubmissionForUser(interaction.guildId, interaction.user.id);
@@ -328,8 +339,8 @@ async function runManagerList(interaction) {
         : "Noch keine Manager hinterlegt.",
       "",
       managers.length === TOP5_TARGET
-        ? "✅ Die automatische Top-5-Fristprüfung ist bereit."
-        : `⚠️ Für die automatische Fristprüfung müssen genau **${TOP5_TARGET} Manager** hinterlegt sein.`,
+        ? "✅ Managerliste vollständig."
+        : `⚠️ Es fehlen noch **${TOP5_TARGET - managers.length}** Einträge. Die Fristprüfung läuft trotzdem; nicht hinterlegte Teilnehmer können nur nicht namentlich ausgewertet werden.`,
     ].join("\n"),
   });
   return interaction.reply({ embeds: [embed], ephemeral: true });
