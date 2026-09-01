@@ -1,5 +1,28 @@
 # KBB Kickbase Bot — Changelog
 
+## Version 0.4.0 — Automatic Top-5 Deadline Check
+
+### New Features
+
+- Added an automatic Top-5 deadline check every **Monday at 22:00 Europe/Berlin**.
+- The bot posts the managers who did not submit in time directly in the configured Top-5 channel.
+- Late submissions are detected by their saved submission timestamp. A player submitted after 22:00 is shown as **zu spät** with the submission time.
+- After the automatic Monday deadline post, the current Top-5 round is archived and a fresh round is started automatically.
+- Added `/kbb top5-missing` for admins to publish the deadline result manually at any time.
+- `/kbb top5-missing runde_abschliessen:true` can also close the current round and immediately start the next one.
+- Added a persistent KBB manager roster so deadline checks know exactly which 14 managers are expected.
+- Added `/kbb manager-add`, `/kbb manager-remove` and `/kbb manager-list`.
+- The automatic deadline check only runs successfully when the manager roster contains exactly **14 managers**.
+- `/kbb setup` can now also configure the Top-5 channel.
+- `/kbb help`, `/kbb league`, `/kbb rules` and `/kbb top5-status` were extended with the deadline/manager information.
+
+### Deadline Rules
+
+- Deadline: **Monday, 22:00 Uhr**.
+- Missing submission: manager has no submission for the active round by the deadline.
+- Late submission: submission timestamp is after the round's Monday 22:00 deadline.
+- Automatic deadline output is deduplicated so it is posted only once per round/deadline.
+
 ## Version 0.3.2 — Public Nickname Change Notice
 
 ### Changed
