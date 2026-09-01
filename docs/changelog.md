@@ -1,5 +1,19 @@
 # KBB Kickbase Bot — Changelog
 
+## Version 0.4.3 — Tuesday Top-5 Deadline
+
+### Changed
+
+- The Top-5 deadline moved from **Monday 22:00** to **Tuesday 22:00 Europe/Berlin**.
+- The automatic scheduler now publishes the deadline report every Tuesday from 22:00 onward, once per active round.
+- `/kbb rules`, `/kbb league`, `/kbb top5-status` and `/kbb help` now show the Tuesday deadline.
+- A round created on Tuesday at or after 22:00 automatically receives the following Tuesday as its next deadline.
+
+### Current Round
+
+- Existing submission timestamps are re-evaluated against the new Tuesday deadline.
+- Submissions made before Tuesday 22:00 are therefore considered **on time** and are not reported as late.
+
 ## Version 0.4.2 — Incomplete Roster Deadline Handling
 
 ### Fixed
