@@ -50,6 +50,11 @@ function getOrCreateRound(data, guildId) {
   return data[guildId].activeRound;
 }
 
+function validIso(value, fallback = new Date()) {
+  const date = new Date(value || fallback);
+  return Number.isNaN(date.getTime()) ? fallback.toISOString() : date.toISOString();
+}
+
 export function sanitizePlayerName(name) {
   return String(name || "")
     .trim()
@@ -125,6 +130,70 @@ export function addTop5Submission(guildId, user, playerName, marketValue = null,
     count,
     target,
     complete,
+    round,
+  };
+}
+
+export function restoreTop5Submissions(guildId, entries = [], target = DEFAULT_TOP5_TARGET) {
+  if (!guildId || !Array.isArray(entries)) {
+    return { ok: false, error: "Ungültige Wiederherstellungsdaten." };
+  }
+
+  const data = read();
+  const round = getOrCreateRound(data, guildId);
+  let restored = 0;
+
+  for (const entry of entries) {
+    const userId = String(entry?.userId || "").trim();
+    const playerName = sanitizePlayerName(entry?.playerName);
+    if (!userId || playerName.length < 2) continue;
+
+    const createdAt = validIso(entry?.createdAt);
+    const existing = round.submissions[userId];
+
+    if (existing) {
+      const existingTime = new Date(existing.createdAt || 0).getTime();
+      const recoveredTime = new Date(createdAt).getTime();
+      if (existingTime <= recoveredTime) continue;
+    }
+
+    round.submissions[userId] = {
+      userId,
+      userTag: entry?.userTag || existing?.userTag || null,
+      playerName,
+      marketValue: entry?.marketValue ?? existing?.marketValue ?? null,
+      createdAt,
+      recoveredAt: new Date().toISOString(),
+    };
+    restored += 1;
+  }
+
+  const submissions = Object.values(round.submissions)
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+
+  if (submissions.length) {
+    const firstCreatedAt = submissions[0].createdAt;
+    if (!round.createdAt || new Date(firstCreatedAt) < new Date(round.createdAt)) {
+      round.createdAt = firstCreatedAt;
+    }
+  }
+
+  const complete = submissions.length >= target;
+  if (complete && !round.completedAt) {
+    round.completedAt = submissions[submissions.length - 1]?.createdAt || new Date().toISOString();
+  }
+
+  if (!write(data)) {
+    return { ok: false, error: "Wiederhergestellte Top-5-Abgaben konnten nicht gespeichert werden." };
+  }
+
+  return {
+    ok: true,
+    restored,
+    count: submissions.length,
+    target,
+    complete,
+    submissions,
     round,
   };
 }
