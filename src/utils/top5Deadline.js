@@ -102,6 +102,7 @@ export function getMissingTop5Managers(guildId, target = DEFAULT_TARGET, now = n
   }
 
   const failed = [...missing, ...late];
+  const untrackedCount = Math.max(0, target - managers.length);
 
   return {
     managers,
@@ -110,6 +111,7 @@ export function getMissingTop5Managers(guildId, target = DEFAULT_TARGET, now = n
     late,
     timely,
     failed,
+    untrackedCount,
     deadline,
     deadlinePassed,
     target,
@@ -122,20 +124,31 @@ function formatSubmissionTime(createdAt) {
   return `${String(parts.hour).padStart(2, "0")}:${String(parts.minute).padStart(2, "0")} Uhr`;
 }
 
+function appendRosterWarning(lines, result) {
+  if (!result.untrackedCount) return;
+  lines.push(
+    "",
+    `⚠️ **Managerliste unvollständig: ${result.managers.length}/${result.target}.**`,
+    `${result.untrackedCount} Teilnehmer ${result.untrackedCount === 1 ? "ist" : "sind"} noch nicht hinterlegt und ${result.untrackedCount === 1 ? "kann" : "können"} deshalb nicht namentlich geprüft werden.`,
+  );
+}
+
 export function buildMissingTop5Message(result, { automatic = false } = {}) {
   const heading = automatic
     ? "## ⏰ Top-5-Abgabefrist beendet"
     : "## 📋 Top-5-Fristprüfung";
 
   if (!result.failed.length) {
-    return [
+    const lines = [
       heading,
       "",
       result.deadlinePassed && result.deadline
-        ? `✅ Alle **${result.managers.length} Manager** haben bis **${result.deadline.label}** rechtzeitig abgegeben.`
-        : `✅ Aktuell haben alle **${result.managers.length} Manager** ihre Top-5-Abgabe eingereicht.`,
-      automatic ? "\n🔄 Die nächste Top-5-Runde wurde automatisch gestartet." : "",
-    ].filter(Boolean).join("\n");
+        ? `✅ Alle **${result.managers.length} hinterlegten Manager** haben bis **${result.deadline.label}** rechtzeitig abgegeben.`
+        : `✅ Aktuell haben alle **${result.managers.length} hinterlegten Manager** ihre Top-5-Abgabe eingereicht.`,
+    ];
+    appendRosterWarning(lines, result);
+    if (automatic) lines.push("", "🔄 Die nächste Top-5-Runde wurde automatisch gestartet.");
+    return lines.join("\n");
   }
 
   const lines = [heading, ""];
@@ -154,7 +167,8 @@ export function buildMissingTop5Message(result, { automatic = false } = {}) {
     lines.push(`**${index++}.** <@${manager.userId}> — **zu spät** (${formatSubmissionTime(manager.submission.createdAt)})`);
   }
 
-  lines.push("", `❌ **${result.failed.length}/${result.managers.length} Manager** haben nicht rechtzeitig abgegeben.`);
+  lines.push("", `❌ **${result.failed.length}/${result.managers.length} hinterlegten Manager** haben nicht rechtzeitig abgegeben.`);
+  appendRosterWarning(lines, result);
   if (automatic) lines.push("", "🔄 Die nächste Top-5-Runde wurde automatisch gestartet.");
 
   return lines.join("\n");
@@ -171,14 +185,6 @@ export async function publishMissingTop5(guild, { automatic = false, resetAfter 
   const settings = getGuildSettings(guild.id);
   const target = Number(process.env.TOP5_MANAGER_TARGET || DEFAULT_TARGET);
   const result = getMissingTop5Managers(guild.id, target, now);
-
-  if (!result.rosterComplete) {
-    return {
-      ok: false,
-      error: `Managerliste unvollständig: ${result.managers.length}/${target}.`,
-      result,
-    };
-  }
 
   const channelId = settings.top5ChannelId || DEFAULT_TOP5_CHANNEL_ID;
   const channel = await guild.channels.fetch(channelId).catch(() => null);
