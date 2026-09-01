@@ -1,6 +1,6 @@
 import { getGuildSettings, setGuildSettings } from "./guildSettings.js";
 import { getManagers } from "./managerStore.js";
-import { recoverKbbStateFromDiscord } from "./top5Recovery.js";
+import { ensureManagerRosterSnapshot, recoverKbbStateFromDiscord } from "./top5Recovery.js";
 import { getTop5Round, getTop5Submissions, resetTop5Round } from "./top5Store.js";
 
 const DEFAULT_TOP5_CHANNEL_ID = process.env.TOP5_CHANNEL_ID || "1522249357179617331";
@@ -56,7 +56,6 @@ export function getRoundDeadline(guildId) {
   const weekday = WEEKDAY_INDEX[created.weekday] ?? 0;
   let daysUntilMonday = (7 - weekday) % 7;
 
-  // Eine Runde, die am Montag ab 22:00 Uhr startet, gehört bereits zur Folgewoche.
   if (daysUntilMonday === 0 && created.hour >= 22) {
     daysUntilMonday = 7;
   }
@@ -246,6 +245,15 @@ async function checkGuild(guild, now = new Date()) {
 export function startTop5DeadlineScheduler(client) {
   const run = async () => {
     for (const guild of client.guilds.cache.values()) {
+      const settings = getGuildSettings(guild.id);
+      const channelId = settings.top5ChannelId || DEFAULT_TOP5_CHANNEL_ID;
+      await ensureManagerRosterSnapshot(guild, {
+        channelId,
+        target: Number(process.env.TOP5_MANAGER_TARGET || DEFAULT_TARGET),
+      }).catch(err => {
+        console.error(`❌ Manager snapshot failed for ${guild.id}:`, err?.message || err);
+      });
+
       await checkGuild(guild).catch(err => {
         console.error(`❌ Top-5 deadline check failed for ${guild.id}:`, err?.message || err);
       });
