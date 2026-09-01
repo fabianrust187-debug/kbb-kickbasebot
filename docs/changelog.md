@@ -1,5 +1,27 @@
 # KBB Kickbase Bot — Changelog
 
+## Version 0.4.1 — Top-5 Recovery & Deploy Safety
+
+### Fixed
+
+- Top-5 submissions are no longer silently lost after a clean deploy/rebuild.
+- On bot startup, the bot scans the configured Top-5 Discord channel and reconstructs the active round from its own public submission messages.
+- Original Discord message timestamps are restored as submission timestamps, so late submissions can still be detected correctly after a deploy.
+- Historical submission messages are also used to recover known league managers.
+
+### Manager Roster Persistence
+
+- Once the manager roster reaches **14/14**, the bot automatically posts a Discord system snapshot of the complete manager list.
+- The snapshot is not used to ping managers; it exists as a persistent recovery source inside Discord.
+- After future deploys, the bot can restore all 14 managers from the latest system snapshot instead of relying only on local JSON files.
+- A new snapshot is created automatically whenever the complete 14-manager roster changes.
+
+### Round Recovery
+
+- Automatic/manual round closures now post a visible **Neue Top-5-Runde gestartet** marker.
+- Recovery only rebuilds submissions after the most recent round boundary, preventing old submissions from leaking into a new round.
+- Fixed the next deadline calculation for rounds started on Monday at or after 22:00; those rounds now correctly use the following Monday.
+
 ## Version 0.4.0 — Automatic Top-5 Deadline Check
 
 ### New Features
