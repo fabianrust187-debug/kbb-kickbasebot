@@ -1,5 +1,6 @@
 import { getGuildSettings, setGuildSettings } from "./guildSettings.js";
 import { getManagers } from "./managerStore.js";
+import { recoverKbbStateFromDiscord } from "./top5Recovery.js";
 import { getTop5Round, getTop5Submissions, resetTop5Round } from "./top5Store.js";
 
 const DEFAULT_TOP5_CHANNEL_ID = process.env.TOP5_CHANNEL_ID || "1522249357179617331";
@@ -55,8 +56,8 @@ export function getRoundDeadline(guildId) {
   const weekday = WEEKDAY_INDEX[created.weekday] ?? 0;
   let daysUntilMonday = (7 - weekday) % 7;
 
-  // If a round begins on Monday after the 22:00 deadline, its deadline is next Monday.
-  if (daysUntilMonday === 0 && (created.hour > 22 || (created.hour === 22 && created.minute > 0))) {
+  // Eine Runde, die am Montag ab 22:00 Uhr startet, gehört bereits zur Folgewoche.
+  if (daysUntilMonday === 0 && created.hour >= 22) {
     daysUntilMonday = 7;
   }
 
@@ -160,6 +161,13 @@ export function buildMissingTop5Message(result, { automatic = false } = {}) {
   return lines.join("\n");
 }
 
+async function postRoundStartMarker(channel) {
+  return channel.send({
+    content: "🔄 **Neue Top-5-Runde gestartet.**\nDie nächste Top-5-Abgabe kann ab sofort eingereicht werden.",
+    allowedMentions: { parse: [] },
+  }).catch(() => null);
+}
+
 export async function publishMissingTop5(guild, { automatic = false, resetAfter = false, now = new Date() } = {}) {
   const settings = getGuildSettings(guild.id);
   const target = Number(process.env.TOP5_MANAGER_TARGET || DEFAULT_TARGET);
@@ -190,9 +198,25 @@ export async function publishMissingTop5(guild, { automatic = false, resetAfter 
   if (resetAfter) {
     const reset = resetTop5Round(guild.id, guild.client.user);
     if (!reset.ok) return { ok: false, error: reset.error || "Top-5-Runde konnte nicht zurückgesetzt werden.", result, message };
+    await postRoundStartMarker(channel);
   }
 
   return { ok: true, result, message };
+}
+
+async function recoverGuild(guild) {
+  const settings = getGuildSettings(guild.id);
+  const channelId = settings.top5ChannelId || DEFAULT_TOP5_CHANNEL_ID;
+  const recovery = await recoverKbbStateFromDiscord(guild, {
+    channelId,
+    target: Number(process.env.TOP5_MANAGER_TARGET || DEFAULT_TARGET),
+  });
+
+  if (recovery.ok) {
+    console.log(`♻️ KBB recovery ${guild.name}: ${recovery.currentSubmissionCount} Abgaben, ${recovery.managerCount}/${recovery.target} Manager`);
+  } else {
+    console.warn(`⚠️ KBB recovery skipped for ${guild.id}: ${recovery.error}`);
+  }
 }
 
 async function checkGuild(guild, now = new Date()) {
@@ -228,6 +252,15 @@ export function startTop5DeadlineScheduler(client) {
     }
   };
 
-  run().catch(() => null);
+  const initialize = async () => {
+    for (const guild of client.guilds.cache.values()) {
+      await recoverGuild(guild).catch(err => {
+        console.error(`❌ KBB recovery failed for ${guild.id}:`, err?.message || err);
+      });
+    }
+    await run();
+  };
+
+  initialize().catch(() => null);
   return setInterval(() => run().catch(() => null), 60_000);
 }
