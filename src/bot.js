@@ -31,7 +31,7 @@ client.once(Events.ClientReady, async () => {
   }
 
   startTop5DeadlineScheduler(client);
-  console.log("⏰ Top-5 deadline scheduler active: Monday 22:00 Europe/Berlin");
+  console.log("⏰ Top-5 deadline scheduler active: Tuesday 22:00 Europe/Berlin");
 });
 
 client.on(Events.GuildCreate, async (guild) => {
