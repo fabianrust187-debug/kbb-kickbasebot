@@ -1,5 +1,22 @@
 # KBB Kickbase Bot — Changelog
 
+## Version 0.4.2 — Incomplete Roster Deadline Handling
+
+### Fixed
+
+- `/kbb top5-missing` no longer fails when the manager roster is incomplete, for example **13/14**.
+- The bot now still publishes all known managers who did not submit on time.
+- Known late submissions continue to be shown with their exact submission time.
+- Missing roster slots are shown as a warning instead of blocking the entire deadline report.
+- Automatic Monday 22:00 deadline checks also continue to work with an incomplete roster.
+
+### Improved Manager Handling
+
+- If the manager roster is not yet full, a legitimate participant using `/kbb top5` is automatically added to the roster.
+- Only when the roster is already full at 14/14 and an unknown user tries to submit is the submission blocked.
+- `/kbb top5-status` now warns when roster entries are missing without claiming that the deadline system is disabled.
+- `/kbb manager-list` now explains that deadline checks remain active even with an incomplete list.
+
 ## Version 0.4.1 — Top-5 Recovery & Deploy Safety
 
 ### Fixed
