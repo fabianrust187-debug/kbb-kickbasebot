@@ -7,6 +7,8 @@ const DEFAULT_TOP5_CHANNEL_ID = process.env.TOP5_CHANNEL_ID || "1522249357179617
 const DEFAULT_TARGET = Number(process.env.TOP5_MANAGER_TARGET || 14);
 const TIME_ZONE = "Europe/Berlin";
 const WEEKDAY_INDEX = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
+const DEADLINE_WEEKDAY = "Tue";
+const DEADLINE_WEEKDAY_INDEX = WEEKDAY_INDEX[DEADLINE_WEEKDAY];
 
 function berlinParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-GB", {
@@ -54,14 +56,14 @@ export function getRoundDeadline(guildId) {
 
   const created = berlinParts(new Date(round.createdAt));
   const weekday = WEEKDAY_INDEX[created.weekday] ?? 0;
-  let daysUntilMonday = (7 - weekday) % 7;
+  let daysUntilDeadline = (DEADLINE_WEEKDAY_INDEX - weekday + 7) % 7;
 
-  if (daysUntilMonday === 0 && created.hour >= 22) {
-    daysUntilMonday = 7;
+  if (daysUntilDeadline === 0 && created.hour >= 22) {
+    daysUntilDeadline = 7;
   }
 
-  const date = addLocalDays(created, daysUntilMonday);
-  const deadlineParts = { ...date, weekday: "Mon", hour: 22, minute: 0 };
+  const date = addLocalDays(created, daysUntilDeadline);
+  const deadlineParts = { ...date, weekday: DEADLINE_WEEKDAY, hour: 22, minute: 0 };
 
   return {
     ...deadlineParts,
@@ -229,7 +231,7 @@ async function checkGuild(guild, now = new Date()) {
   const result = getMissingTop5Managers(guild.id, Number(process.env.TOP5_MANAGER_TARGET || DEFAULT_TARGET), now);
   const deadline = result.deadline;
 
-  if (!deadline || parts.weekday !== "Mon" || parts.hour < 22) return;
+  if (!deadline || parts.weekday !== DEADLINE_WEEKDAY || parts.hour < 22) return;
   if (localDateKey(parts) !== deadline.dateKey) return;
 
   const settings = getGuildSettings(guild.id);
