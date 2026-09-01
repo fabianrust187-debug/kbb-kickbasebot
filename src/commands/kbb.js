@@ -89,7 +89,7 @@ function buildRulesDescription() {
     "• **Underpay ist verboten.** Kein Spieler darf unter Marktwert verkauft werden.",
     "• Jeder Manager muss pro Spieltag einen eigenen **Top-5-Spieler** abgeben.",
     "• Top-5 bedeutet: die 5 Spieler im eigenen Team, die an diesem Spieltag die meisten Punkte gemacht haben.",
-    "• **Abgabefrist ist Montag um 22:00 Uhr.**",
+    "• **Abgabefrist ist Dienstag um 22:00 Uhr.**",
     "",
     "### ⚖️ Fairplay",
     "Nicht erlaubt sind Absprachen, Pushen, Marktmanipulation, Beleidigungen und bewusstes Ausnutzen von Schlupflöchern.",
@@ -114,7 +114,7 @@ function buildLeagueEmbed(interaction) {
       `• **Startkapital:** ${LEAGUE_INFO.startCapital}`,
       `• **Einsatz:** ${LEAGUE_INFO.entryFee}`,
       `• **Zahlung:** ${LEAGUE_INFO.payment}`,
-      `• **Top-5-Frist:** Montag, 22:00 Uhr`,
+      `• **Top-5-Frist:** Dienstag, 22:00 Uhr`,
       "",
       "**Discord Setup**",
       `• Managerliste: **${managers.length}/${TOP5_TARGET}**`,
@@ -151,7 +151,7 @@ function buildTop5StatusEmbed(interaction) {
     description: [
       `**Abgegeben:** ${submissions.length}/${TOP5_TARGET}`,
       `**Managerliste:** ${managers.length}/${TOP5_TARGET}`,
-      `**Frist:** Montag, 22:00 Uhr`,
+      `**Frist:** Dienstag, 22:00 Uhr`,
       "",
       submissions.length
         ? submissions.map((entry, index) => `**${index + 1}.** <@${entry.userId}> — **${entry.playerName}**`).join("\n")
@@ -184,7 +184,7 @@ async function runHelp(interaction) {
       "• `/kbb setup` — Channels setzen *(Admin)*",
       "",
       `**Top-5-Abgabe Channel:** <#${top5ChannelId}>`,
-      "**Automatische Fristprüfung:** jeden Montag um **22:00 Uhr (Europe/Berlin)**.",
+      "**Automatische Fristprüfung:** jeden Dienstag um **22:00 Uhr (Europe/Berlin)**.",
     ].join("\n"),
   });
   return interaction.reply({ embeds: [embed], ephemeral: true });
