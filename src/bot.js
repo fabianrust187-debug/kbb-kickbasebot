@@ -9,7 +9,7 @@ import { registerConfiguredCommands, registerCommandsForGuild } from "./register
 import pingCommand from "./commands/ping.js";
 import kbbCommand from "./commands/kbb.js";
 import { startTop5DeadlineScheduler } from "./utils/top5Deadline.js";
-import { handleTop5Button } from "./utils/top5ButtonHandler.js";
+import { handleTop5Button, handleTop5ButtonModal } from "./utils/top5ButtonHandler.js";
 
 const client = new Client({
   intents: [
@@ -51,6 +51,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isModalSubmit()) {
+      if (await handleTop5ButtonModal(interaction)) return;
       if (await kbbCommand.handleModalSubmit?.(interaction)) return;
     }
 
