@@ -4,18 +4,41 @@ import {
   TextInputBuilder,
   TextInputStyle,
 } from "discord.js";
+import { buildKbbEmbed } from "./embeds.js";
 import { getGuildSettings } from "./guildSettings.js";
 import { addManager, getManagers } from "./managerStore.js";
 import { isTop5DeadlinePassed } from "./top5Deadline.js";
 import { TOP5_BUTTON_PREFIX } from "./top5Button.js";
-import { getTop5Round, getTop5SubmissionForUser } from "./top5Store.js";
+import {
+  addTop5Submission,
+  getTop5Round,
+  getTop5SubmissionForUser,
+} from "./top5Store.js";
 
 const DEFAULT_TOP5_CHANNEL_ID = process.env.TOP5_CHANNEL_ID || "1522249357179617331";
 const TOP5_TARGET = Number(process.env.TOP5_MANAGER_TARGET || 14);
+const TOP5_BUTTON_MODAL_PREFIX = "kbb_top5_button_submit:";
 
 function getTop5ChannelId(guildId) {
   const settings = getGuildSettings(guildId);
   return settings.top5ChannelId || DEFAULT_TOP5_CHANNEL_ID;
+}
+
+function buildTop5SummaryEmbed(submissions) {
+  const list = submissions.map((entry, index) => (
+    `**${index + 1}.** <@${entry.userId}> — **${entry.playerName}**`
+  ));
+
+  return buildKbbEmbed({
+    title: "✅ Top-5-Abgabe komplett",
+    description: [
+      `Alle **${TOP5_TARGET} Manager** haben ihre Top-5-Abgabe eingetragen.`,
+      "",
+      "## 📋 Zusammenfassung",
+      ...list,
+    ].join("\n"),
+    footer: "187 KICKBASEBANDE • Top-5-Abgabe",
+  });
 }
 
 export async function handleTop5Button(interaction) {
@@ -66,7 +89,7 @@ export async function handleTop5Button(interaction) {
   }
 
   const modal = new ModalBuilder()
-    .setCustomId(`kbb_top5_submit:${interaction.guildId}:${interaction.user.id}`)
+    .setCustomId(`${TOP5_BUTTON_MODAL_PREFIX}${interaction.guildId}:${interaction.user.id}:${activeRound.id}`)
     .setTitle("Top-5-Spieler abgeben");
 
   const input = new TextInputBuilder()
@@ -80,5 +103,54 @@ export async function handleTop5Button(interaction) {
 
   modal.addComponents(new ActionRowBuilder().addComponents(input));
   await interaction.showModal(modal);
+  return true;
+}
+
+export async function handleTop5ButtonModal(interaction) {
+  if (!interaction.isModalSubmit?.() || !interaction.customId?.startsWith(TOP5_BUTTON_MODAL_PREFIX)) return false;
+
+  const payload = interaction.customId.slice(TOP5_BUTTON_MODAL_PREFIX.length);
+  const [guildId, userId, roundId] = payload.split(":");
+
+  if (guildId !== interaction.guildId || userId !== interaction.user.id) {
+    await interaction.reply({ content: "❌ Dieses Top-5-Formular gehört nicht zu dir.", ephemeral: true });
+    return true;
+  }
+
+  const activeRound = getTop5Round(interaction.guildId);
+  if (!activeRound?.id || activeRound.id !== roundId) {
+    await interaction.reply({ content: "🔄 Diese Top-5-Runde wurde inzwischen beendet. Bitte nutze den aktuellen Button im Channel.", ephemeral: true });
+    return true;
+  }
+
+  if (isTop5DeadlinePassed(interaction.guildId)) {
+    await interaction.reply({ content: "⏰ Die Abgabefrist ist inzwischen abgelaufen. Diese Abgabe wurde nicht mehr angenommen.", ephemeral: true });
+    return true;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  const playerName = interaction.fields.getTextInputValue("player_name");
+  const result = addTop5Submission(interaction.guildId, interaction.user, playerName, null, TOP5_TARGET);
+
+  if (!result.ok) {
+    const message = result.duplicate
+      ? `✅ Du hast in dieser Runde bereits **${result.submission.playerName}** abgegeben.`
+      : `❌ ${result.error || "Speichern fehlgeschlagen."}`;
+    await interaction.editReply({ content: message });
+    return true;
+  }
+
+  await interaction.channel?.send({
+    content: `Manager: ${interaction.user} hat **${result.submission.playerName}** abgegeben.`,
+    allowedMentions: { users: [interaction.user.id], parse: [] },
+  }).catch(() => null);
+
+  if (result.complete) {
+    await interaction.channel?.send({ embeds: [buildTop5SummaryEmbed(result.submissions)] }).catch(() => null);
+  }
+
+  await interaction.editReply({
+    content: `✅ Abgabe gespeichert: **${result.submission.playerName}** (${result.count}/${result.target})`,
+  });
   return true;
 }
