@@ -14,11 +14,8 @@ export function buildTop5ButtonRow(roundId, disabled = false) {
   );
 }
 
-function getButtonCustomIds(message) {
-  return (message?.components || [])
-    .flatMap(row => row.components || [])
-    .map(component => component.customId)
-    .filter(Boolean);
+function getButtonComponents(message) {
+  return (message?.components || []).flatMap(row => row.components || []);
 }
 
 export async function ensureTop5SubmitButton(guild, { channelId } = {}) {
@@ -39,16 +36,20 @@ export async function ensureTop5SubmitButton(guild, { channelId } = {}) {
 
   for (const message of recent.values()) {
     if (message.author?.id !== guild.client.user?.id) continue;
-    const customIds = getButtonCustomIds(message);
-    if (customIds.includes(expectedId)) current = message;
-    if (customIds.some(id => id.startsWith(TOP5_BUTTON_PREFIX) && id !== expectedId)) stale.push(message);
+    const components = getButtonComponents(message);
+    if (components.some(component => component.customId === expectedId)) current = message;
+
+    const staleButton = components.find(component => (
+      component.customId?.startsWith(TOP5_BUTTON_PREFIX)
+      && component.customId !== expectedId
+      && !component.disabled
+    ));
+    if (staleButton) stale.push({ message, customId: staleButton.customId });
   }
 
-  for (const message of stale) {
-    const oldId = getButtonCustomIds(message).find(id => id.startsWith(TOP5_BUTTON_PREFIX));
-    if (!oldId) continue;
-    const oldRoundId = oldId.slice(TOP5_BUTTON_PREFIX.length);
-    await message.edit({ components: [buildTop5ButtonRow(oldRoundId, true)] }).catch(() => null);
+  for (const entry of stale) {
+    const oldRoundId = entry.customId.slice(TOP5_BUTTON_PREFIX.length);
+    await entry.message.edit({ components: [buildTop5ButtonRow(oldRoundId, true)] }).catch(() => null);
   }
 
   if (current) return { ok: true, message: current, created: false };
