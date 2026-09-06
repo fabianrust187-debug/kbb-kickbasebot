@@ -1,5 +1,22 @@
 # KBB Kickbase Bot — Changelog
 
+## Version 0.4.4 — Weekly Top-5 Submission Button
+
+### New
+
+- The Top-5 channel now gets a persistent **🎯 Spieler abgeben** button for the active round.
+- Pressing the button opens the same private player-name form as `/kbb top5`.
+- The button is created automatically after bot startup and after every newly started Top-5 round.
+- Old buttons from previous rounds are automatically disabled.
+
+### Per-Manager Validation
+
+- A manager who has not submitted yet can use the button and enter a player immediately.
+- A manager who already submitted in the current round receives a private confirmation showing the player already submitted.
+- Buttons from older rounds are rejected with a private stale-round notice.
+- Once Tuesday 22:00 has been reached, the active round no longer accepts new submissions through the button.
+- The public Discord button remains visually visible to everyone because Discord cannot disable one shared button for only one individual user; eligibility is therefore checked privately on every click.
+
 ## Version 0.4.3 — Tuesday Top-5 Deadline
 
 ### Changed
