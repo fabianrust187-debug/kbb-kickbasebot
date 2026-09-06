@@ -8,7 +8,7 @@ export function buildTop5ButtonRow(roundId, disabled = false) {
     new ButtonBuilder()
       .setCustomId(`${TOP5_BUTTON_PREFIX}${roundId}`)
       .setLabel("Spieler abgeben")
-      .setEmoji("🎯")
+      .setEmoji({ name: "🎯" })
       .setStyle(ButtonStyle.Success)
       .setDisabled(disabled),
   );
