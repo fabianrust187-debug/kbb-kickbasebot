@@ -18,6 +18,11 @@ function getButtonComponents(message) {
   return (message?.components || []).flatMap(row => row.components || []);
 }
 
+function hasTop5Button(message) {
+  return getButtonComponents(message)
+    .some(component => component.customId?.startsWith(TOP5_BUTTON_PREFIX));
+}
+
 export async function ensureTop5SubmitButton(guild, { channelId } = {}) {
   const round = getTop5Round(guild.id);
   if (!round?.id) return { ok: false, error: "Keine aktive Top-5-Runde." };
@@ -31,28 +36,38 @@ export async function ensureTop5SubmitButton(guild, { channelId } = {}) {
   const recent = await channel.messages.fetch({ limit: 100 }).catch(() => null);
   if (!recent) return { ok: false, error: "Top-5-Nachrichten konnten nicht geladen werden." };
 
-  let current = null;
-  const stale = [];
+  const currentMessages = [];
+  const obsoleteMessages = [];
 
   for (const message of recent.values()) {
-    if (message.author?.id !== guild.client.user?.id) continue;
-    const components = getButtonComponents(message);
-    if (components.some(component => component.customId === expectedId)) current = message;
+    if (message.author?.id !== guild.client.user?.id || !hasTop5Button(message)) continue;
 
-    const staleButton = components.find(component => (
-      component.customId?.startsWith(TOP5_BUTTON_PREFIX)
-      && component.customId !== expectedId
-      && !component.disabled
-    ));
-    if (staleButton) stale.push({ message, customId: staleButton.customId });
+    const isCurrent = getButtonComponents(message)
+      .some(component => component.customId === expectedId);
+
+    if (isCurrent) currentMessages.push(message);
+    else obsoleteMessages.push(message);
   }
 
-  for (const entry of stale) {
-    const oldRoundId = entry.customId.slice(TOP5_BUTTON_PREFIX.length);
-    await entry.message.edit({ components: [buildTop5ButtonRow(oldRoundId, true)] }).catch(() => null);
+  // Keep exactly one button message for the active round. If rapid deploys/tests
+  // created duplicates, keep the newest one and remove the rest.
+  currentMessages.sort((a, b) => b.createdTimestamp - a.createdTimestamp);
+  const current = currentMessages.shift() || null;
+  const duplicates = currentMessages;
+
+  const cleanup = [...obsoleteMessages, ...duplicates];
+  for (const message of cleanup) {
+    await message.delete().catch(() => null);
   }
 
-  if (current) return { ok: true, message: current, created: false };
+  if (current) {
+    return {
+      ok: true,
+      message: current,
+      created: false,
+      cleaned: cleanup.length,
+    };
+  }
 
   const message = await channel.send({
     content: [
@@ -65,5 +80,10 @@ export async function ensureTop5SubmitButton(guild, { channelId } = {}) {
   }).catch(() => null);
 
   if (!message) return { ok: false, error: "Top-5-Button konnte nicht gepostet werden." };
-  return { ok: true, message, created: true };
+  return {
+    ok: true,
+    message,
+    created: true,
+    cleaned: cleanup.length,
+  };
 }
