@@ -1,5 +1,16 @@
 # KBB Kickbase Bot — Changelog
 
+## Version 0.4.5 — Top-5 Button Cleanup
+
+### Improved
+
+- The Top-5 channel now keeps **exactly one** submission-button message for the active round.
+- Duplicate button messages created by rapid deploys, restarts or tests are automatically deleted.
+- Button messages from older Top-5 rounds are deleted instead of only being disabled.
+- After a round change, the scheduler removes stale buttons and keeps/posts only the current round's button.
+- The cleanup runs automatically with the existing Top-5 scheduler, so no manual cleanup command is required.
+- `/kbb top5` remains available as a fallback submission method.
+
 ## Version 0.4.4 — Weekly Top-5 Submission Button
 
 ### New
