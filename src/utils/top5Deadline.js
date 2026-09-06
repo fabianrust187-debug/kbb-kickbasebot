@@ -1,6 +1,7 @@
 import { getGuildSettings, setGuildSettings } from "./guildSettings.js";
 import { getManagers } from "./managerStore.js";
 import { ensureManagerRosterSnapshot, recoverKbbStateFromDiscord } from "./top5Recovery.js";
+import { ensureTop5SubmitButton } from "./top5Button.js";
 import { getTop5Round, getTop5Submissions, resetTop5Round } from "./top5Store.js";
 
 const DEFAULT_TOP5_CHANNEL_ID = process.env.TOP5_CHANNEL_ID || "1522249357179617331";
@@ -73,12 +74,17 @@ export function getRoundDeadline(guildId) {
   };
 }
 
+export function isTop5DeadlinePassed(guildId, now = new Date()) {
+  const deadline = getRoundDeadline(guildId);
+  if (!deadline) return false;
+  return localMinuteKey(berlinParts(now)) >= deadline.key;
+}
+
 export function getMissingTop5Managers(guildId, target = DEFAULT_TARGET, now = new Date()) {
   const managers = getManagers(guildId);
   const submissions = getTop5Submissions(guildId);
   const deadline = getRoundDeadline(guildId);
-  const nowKey = localMinuteKey(berlinParts(now));
-  const deadlinePassed = !!deadline && nowKey >= deadline.key;
+  const deadlinePassed = isTop5DeadlinePassed(guildId, now);
   const byUser = new Map(submissions.map(entry => [String(entry.userId), entry]));
 
   const missing = [];
@@ -206,6 +212,7 @@ export async function publishMissingTop5(guild, { automatic = false, resetAfter 
     const reset = resetTop5Round(guild.id, guild.client.user);
     if (!reset.ok) return { ok: false, error: reset.error || "Top-5-Runde konnte nicht zurückgesetzt werden.", result, message };
     await postRoundStartMarker(channel);
+    await ensureTop5SubmitButton(guild, { channelId });
   }
 
   return { ok: true, result, message };
@@ -255,11 +262,16 @@ export function startTop5DeadlineScheduler(client) {
     for (const guild of client.guilds.cache.values()) {
       const settings = getGuildSettings(guild.id);
       const channelId = settings.top5ChannelId || DEFAULT_TOP5_CHANNEL_ID;
+
       await ensureManagerRosterSnapshot(guild, {
         channelId,
         target: Number(process.env.TOP5_MANAGER_TARGET || DEFAULT_TARGET),
       }).catch(err => {
         console.error(`❌ Manager snapshot failed for ${guild.id}:`, err?.message || err);
+      });
+
+      await ensureTop5SubmitButton(guild, { channelId }).catch(err => {
+        console.error(`❌ Top-5 button failed for ${guild.id}:`, err?.message || err);
       });
 
       await checkGuild(guild).catch(err => {
