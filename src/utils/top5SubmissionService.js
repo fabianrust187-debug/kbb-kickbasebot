@@ -1,7 +1,16 @@
 import { formatMarketValue, resolveKickbasePlayerMarketValue } from "./kickbaseApi.js";
+import { isTop5DeadlinePassed } from "./top5Deadline.js";
 import { addTop5Submission, getTop5SubmissionForUser, sanitizePlayerName } from "./top5Store.js";
 
 export async function submitTop5WithMarketValue(guildId, user, inputName, target) {
+  if (isTop5DeadlinePassed(guildId)) {
+    return {
+      ok: false,
+      code: "DEADLINE_PASSED",
+      error: "Die Top-5-Abgabefrist für diese Runde ist beendet. Die nächste reguläre Runde startet Freitag um 20:00 Uhr oder wird bei einer englischen Woche manuell durch die Ligaleitung gestartet.",
+    };
+  }
+
   const existing = getTop5SubmissionForUser(guildId, user?.id);
   if (existing) {
     return {
