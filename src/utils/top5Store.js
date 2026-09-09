@@ -55,6 +55,15 @@ function validIso(value, fallback = new Date()) {
   return Number.isNaN(date.getTime()) ? fallback.toISOString() : date.toISOString();
 }
 
+function validMarketValue(value) {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) return Math.round(value);
+  if (typeof value === "string") {
+    const parsed = Number(value.replace(/[^0-9.-]/g, ""));
+    return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : null;
+  }
+  return null;
+}
+
 export function sanitizePlayerName(name) {
   return String(name || "")
     .trim()
@@ -79,7 +88,37 @@ export function getTop5SubmissionForUser(guildId, userId) {
   return round?.submissions?.[userId] || null;
 }
 
-export function addTop5Submission(guildId, user, playerName, marketValue = null, target = DEFAULT_TOP5_TARGET) {
+export function getTop5History(guildId, limit = 20) {
+  if (!guildId) return [];
+  const data = read();
+  const guild = data[guildId] || {};
+  const rounds = [guild.activeRound, ...(Array.isArray(guild.history) ? guild.history : [])].filter(Boolean);
+  const entries = [];
+
+  for (const round of rounds) {
+    for (const submission of Object.values(round.submissions || {})) {
+      entries.push({
+        ...submission,
+        roundId: round.id || null,
+        roundCreatedAt: round.createdAt || null,
+        archivedAt: round.archivedAt || null,
+      });
+    }
+  }
+
+  return entries
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    .slice(0, Math.max(1, Number(limit) || 20));
+}
+
+export function addTop5Submission(
+  guildId,
+  user,
+  playerName,
+  marketValue = null,
+  target = DEFAULT_TOP5_TARGET,
+  metadata = {},
+) {
   if (!guildId || !user?.id) {
     return { ok: false, error: "Missing guild or user." };
   }
@@ -106,7 +145,13 @@ export function addTop5Submission(guildId, user, playerName, marketValue = null,
     userId: user.id,
     userTag: user.tag || user.username || null,
     playerName: cleanName,
-    marketValue,
+    submittedPlayerName: sanitizePlayerName(metadata.submittedPlayerName || cleanName),
+    kickbasePlayerId: metadata.playerId ? String(metadata.playerId) : null,
+    marketValue: validMarketValue(marketValue),
+    marketValueFetchedAt: metadata.fetchedAt ? validIso(metadata.fetchedAt) : null,
+    marketValueSource: metadata.source || null,
+    kickbaseCompetitionId: metadata.competitionId ? String(metadata.competitionId) : null,
+    kickbaseLeagueId: metadata.leagueId ? String(metadata.leagueId) : null,
     createdAt: new Date().toISOString(),
   };
 
@@ -161,7 +206,15 @@ export function restoreTop5Submissions(guildId, entries = [], target = DEFAULT_T
       userId,
       userTag: entry?.userTag || existing?.userTag || null,
       playerName,
-      marketValue: entry?.marketValue ?? existing?.marketValue ?? null,
+      submittedPlayerName: sanitizePlayerName(entry?.submittedPlayerName || playerName),
+      kickbasePlayerId: entry?.kickbasePlayerId ? String(entry.kickbasePlayerId) : existing?.kickbasePlayerId || null,
+      marketValue: validMarketValue(entry?.marketValue ?? existing?.marketValue),
+      marketValueFetchedAt: entry?.marketValueFetchedAt
+        ? validIso(entry.marketValueFetchedAt)
+        : existing?.marketValueFetchedAt || null,
+      marketValueSource: entry?.marketValueSource || existing?.marketValueSource || null,
+      kickbaseCompetitionId: entry?.kickbaseCompetitionId || existing?.kickbaseCompetitionId || null,
+      kickbaseLeagueId: entry?.kickbaseLeagueId || existing?.kickbaseLeagueId || null,
       createdAt,
       recoveredAt: new Date().toISOString(),
     };
