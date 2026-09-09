@@ -10,6 +10,7 @@ import pingCommand from "./commands/ping.js";
 import kbbCommand from "./commands/kbb.js";
 import { runKbbHelp, runKickbaseInfo } from "./commands/kbbDiagnostics.js";
 import { runKickbaseFeedTest } from "./commands/kbbFeedTest.js";
+import { runTop5Start } from "./commands/kbbTop5Start.js";
 import { startTop5DeadlineScheduler } from "./utils/top5Deadline.js";
 import { handleTop5Button, handleTop5ButtonModal } from "./utils/top5ButtonHandler.js";
 import { runTop5ResetWithUi } from "./utils/top5ResetHandler.js";
@@ -64,6 +65,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const subcommand = interaction.options.getSubcommand(false);
       if (subcommand === "kickbase-info") return runKickbaseInfo(interaction);
       if (subcommand === "feed-test") return runKickbaseFeedTest(interaction);
+      if (subcommand === "top5-start") return runTop5Start(interaction);
       if (subcommand === "top5-reset") return runTop5ResetWithUi(interaction);
       if (subcommand === "help") return runKbbHelp(interaction);
     }
