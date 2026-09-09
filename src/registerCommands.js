@@ -13,13 +13,30 @@ const commandModules = [
   kbbCommand,
 ];
 
+function addKbbDiagnosticSubcommands(json) {
+  if (String(json?.name || "").toLowerCase() !== "kbb") return json;
+
+  if (!Array.isArray(json.options)) json.options = [];
+
+  const exists = json.options.some(option => option?.type === 1 && option?.name === "kickbase-info");
+  if (!exists) {
+    json.options.push({
+      type: 1,
+      name: "kickbase-info",
+      description: "Kickbase-Verbindung und Liga-ID prüfen",
+    });
+  }
+
+  return json;
+}
+
 function getCommandsJson() {
   const seen = new Set();
   const commands = [];
 
   for (const command of commandModules) {
     if (!command?.data?.toJSON) continue;
-    const json = command.data.toJSON();
+    const json = addKbbDiagnosticSubcommands(command.data.toJSON());
     const name = String(json.name || "").toLowerCase();
     if (!name || seen.has(name)) continue;
 
