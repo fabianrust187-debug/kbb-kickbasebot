@@ -113,7 +113,8 @@ export async function runKbbHelp(interaction) {
       "• `/kbb top5-status` — Abgabestand inklusive Marktwert anzeigen",
       "• `/kbb top5-history` — gespeicherte Top-5-Abgaben und Marktwerte abrufen",
       "• `/kbb top5-missing` — Fristprüfung manuell posten *(Admin)*",
-      "• `/kbb top5-reset` — neue Top-5-Runde starten *(Admin)*",
+      "• `/kbb top5-start` — neue Runde manuell starten, z. B. englische Woche *(Admin)*",
+      "• `/kbb top5-reset` — aktuelle Runde zurücksetzen *(Admin)*",
       "• `/kbb manager-add` — Manager zur Teilnehmerliste hinzufügen *(Admin)*",
       "• `/kbb manager-remove` — Manager entfernen *(Admin)*",
       "• `/kbb manager-list` — Teilnehmerliste anzeigen",
@@ -123,7 +124,9 @@ export async function runKbbHelp(interaction) {
       "",
       `**Top-5-Abgabe Channel:** <#${top5ChannelId}>`,
       `**Feature-Test Channel:** <#${DEFAULT_TEST_CHANNEL_ID}>`,
-      "**Automatische Fristprüfung:** jeden Dienstag um **22:00 Uhr (Europe/Berlin)**.",
+      "**Regulärer Rundenstart:** Freitag um **20:00 Uhr (Europe/Berlin)**.",
+      "**Abgabefrist:** Dienstag um **22:00 Uhr (Europe/Berlin)**.",
+      "Nach der Dienstagsfrist bleibt der Abgabe-Button weg, bis die nächste Runde am Freitag startet.",
     ].join("\n"),
   });
 
