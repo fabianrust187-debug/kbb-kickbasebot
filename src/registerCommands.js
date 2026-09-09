@@ -39,6 +39,11 @@ function addKbbDiagnosticSubcommands(json) {
         },
       ],
     },
+    {
+      type: 1,
+      name: "top5-start",
+      description: "Neue Top-5-Runde manuell starten (z.B. englische Woche)",
+    },
   ];
 
   for (const definition of diagnostics) {
