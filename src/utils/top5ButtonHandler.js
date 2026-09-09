@@ -53,6 +53,24 @@ function buildLookupError(result) {
   return `❌ ${result.error || "Spieler konnte bei Kickbase nicht eindeutig gefunden werden."}${suggestions}\n\nBitte den Spielernamen genauer eingeben und erneut versuchen.`;
 }
 
+async function buttonBelongsToLatestVisibleRound(interaction) {
+  const channel = interaction.channel;
+  if (!channel?.messages?.fetch || !interaction.message?.createdTimestamp) return false;
+
+  const recent = await channel.messages.fetch({ limit: 100 }).catch(() => null);
+  if (!recent) return false;
+
+  const latestStart = [...recent.values()]
+    .filter(message => (
+      message.author?.id === interaction.guild?.client.user?.id
+      && String(message.content || "").includes("Neue Top-5-Runde gestartet")
+    ))
+    .sort((a, b) => b.createdTimestamp - a.createdTimestamp)[0];
+
+  if (!latestStart) return false;
+  return interaction.message.createdTimestamp >= latestStart.createdTimestamp;
+}
+
 export async function handleTop5Button(interaction) {
   if (!interaction.isButton?.() || !interaction.customId?.startsWith(TOP5_BUTTON_PREFIX)) return false;
 
@@ -69,13 +87,21 @@ export async function handleTop5Button(interaction) {
 
   const clickedRoundId = interaction.customId.slice(TOP5_BUTTON_PREFIX.length);
   const activeRound = getTop5Round(interaction.guildId);
-  if (!activeRound?.id || activeRound.id !== clickedRoundId) {
-    await interaction.reply({ content: "🔄 Dieser Button gehört zu einer bereits beendeten Top-5-Runde. Bitte nutze den aktuellen Button weiter unten im Channel.", ephemeral: true });
+  if (!activeRound?.id) {
+    await interaction.reply({ content: "🔄 Aktuell ist keine Top-5-Runde geöffnet.", ephemeral: true });
     return true;
   }
 
+  if (activeRound.id !== clickedRoundId) {
+    const stillCurrent = await buttonBelongsToLatestVisibleRound(interaction);
+    if (!stillCurrent) {
+      await interaction.reply({ content: "🔄 Dieser Button gehört zu einer bereits beendeten Top-5-Runde. Bitte nutze den aktuellen Button im Channel.", ephemeral: true });
+      return true;
+    }
+  }
+
   if (isTop5DeadlinePassed(interaction.guildId)) {
-    await interaction.reply({ content: "⏰ Die Top-5-Abgabefrist für diese Runde ist bereits beendet. Die nächste Runde startet automatisch.", ephemeral: true });
+    await interaction.reply({ content: "⏰ Die Top-5-Abgabefrist für diese Runde ist beendet. Die nächste reguläre Runde startet Freitag um 20:00 Uhr.", ephemeral: true });
     return true;
   }
 
