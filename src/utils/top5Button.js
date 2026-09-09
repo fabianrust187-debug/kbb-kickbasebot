@@ -23,6 +23,28 @@ function hasTop5Button(message) {
     .some(component => component.customId?.startsWith(TOP5_BUTTON_PREFIX));
 }
 
+export async function cleanupTop5SubmitButtons(guild, { channelId } = {}) {
+  const channel = await guild.channels.fetch(channelId).catch(() => null);
+  if (!channel?.isTextBased?.() || !channel.messages?.fetch) {
+    return { ok: false, error: "Top-5-Channel nicht lesbar.", deleted: 0 };
+  }
+
+  const recent = await channel.messages.fetch({ limit: 100 }).catch(() => null);
+  if (!recent) return { ok: false, error: "Top-5-Nachrichten konnten nicht geladen werden.", deleted: 0 };
+
+  const buttonMessages = [...recent.values()].filter(message => (
+    message.author?.id === guild.client.user?.id && hasTop5Button(message)
+  ));
+
+  let deleted = 0;
+  for (const message of buttonMessages) {
+    const success = await message.delete().then(() => true).catch(() => false);
+    if (success) deleted += 1;
+  }
+
+  return { ok: true, deleted };
+}
+
 export async function ensureTop5SubmitButton(guild, { channelId } = {}) {
   const round = getTop5Round(guild.id);
   if (!round?.id) return { ok: false, error: "Keine aktive Top-5-Runde." };
@@ -49,8 +71,6 @@ export async function ensureTop5SubmitButton(guild, { channelId } = {}) {
     else obsoleteMessages.push(message);
   }
 
-  // Keep exactly one button message for the active round. If rapid deploys/tests
-  // created duplicates, keep the newest one and remove the rest.
   currentMessages.sort((a, b) => b.createdTimestamp - a.createdTimestamp);
   const current = currentMessages.shift() || null;
   const duplicates = currentMessages;
