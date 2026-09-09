@@ -37,6 +37,7 @@ client.once(Events.ClientReady, async () => {
 
   startTop5DeadlineScheduler(client);
   console.log("⏰ Top-5 deadline scheduler active: Tuesday 22:00 Europe/Berlin");
+  console.log("🧪 Kickbase feed-test route active.");
 });
 
 client.on(Events.GuildCreate, async (guild) => {
@@ -64,7 +65,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.commandName === "kbb") {
       const subcommand = interaction.options.getSubcommand(false);
       if (subcommand === "kickbase-info") return runKickbaseInfo(interaction);
-      if (subcommand === "feed-test") return runKickbaseFeedTest(interaction);
+      if (subcommand === "feed-test") {
+        console.log(`🧪 /kbb feed-test requested by ${interaction.user.tag} (${interaction.user.id})`);
+        if (!interaction.deferred && !interaction.replied) {
+          await interaction.deferReply({ ephemeral: true });
+        }
+        return runKickbaseFeedTest(interaction);
+      }
       if (subcommand === "top5-start") return runTop5Start(interaction);
       if (subcommand === "top5-reset") return runTop5ResetWithUi(interaction);
       if (subcommand === "help") return runKbbHelp(interaction);
