@@ -6,11 +6,15 @@ import {
 } from "discord.js";
 import { buildKbbEmbed } from "./embeds.js";
 import { getGuildSettings } from "./guildSettings.js";
+import { formatMarketValue } from "./kickbaseApi.js";
 import { addManager, getManagers } from "./managerStore.js";
 import { isTop5DeadlinePassed } from "./top5Deadline.js";
 import { TOP5_BUTTON_PREFIX } from "./top5Button.js";
 import {
-  addTop5Submission,
+  formatTop5SubmissionLine,
+  submitTop5WithMarketValue,
+} from "./top5SubmissionService.js";
+import {
   getTop5Round,
   getTop5SubmissionForUser,
 } from "./top5Store.js";
@@ -26,7 +30,7 @@ function getTop5ChannelId(guildId) {
 
 function buildTop5SummaryEmbed(submissions) {
   const list = submissions.map((entry, index) => (
-    `**${index + 1}.** <@${entry.userId}> — **${entry.playerName}**`
+    `**${index + 1}.** <@${entry.userId}> — **${entry.playerName}** — MW: **${formatMarketValue(entry.marketValue)}**`
   ));
 
   return buildKbbEmbed({
@@ -39,6 +43,14 @@ function buildTop5SummaryEmbed(submissions) {
     ].join("\n"),
     footer: "187 KICKBASEBANDE • Top-5-Abgabe",
   });
+}
+
+function buildLookupError(result) {
+  const suggestions = result.lookup?.suggestions?.length
+    ? `\n\nMögliche Treffer:\n${result.lookup.suggestions.map(name => `• **${name}**`).join("\n")}`
+    : "";
+
+  return `❌ ${result.error || "Spieler konnte bei Kickbase nicht eindeutig gefunden werden."}${suggestions}\n\nBitte den Spielernamen genauer eingeben und erneut versuchen.`;
 }
 
 export async function handleTop5Button(interaction) {
@@ -69,7 +81,10 @@ export async function handleTop5Button(interaction) {
 
   const existing = getTop5SubmissionForUser(interaction.guildId, interaction.user.id);
   if (existing) {
-    await interaction.reply({ content: `✅ Du hast in dieser Runde bereits **${existing.playerName}** abgegeben.`, ephemeral: true });
+    await interaction.reply({
+      content: `✅ Du hast in dieser Runde bereits **${existing.playerName}** abgegeben. Marktwert bei Abgabe: **${formatMarketValue(existing.marketValue)}**`,
+      ephemeral: true,
+    });
     return true;
   }
 
@@ -95,7 +110,7 @@ export async function handleTop5Button(interaction) {
   const input = new TextInputBuilder()
     .setCustomId("player_name")
     .setLabel("Welchen Spieler gibst du ab?")
-    .setPlaceholder("z.B. Manuel Neuer")
+    .setPlaceholder("z.B. Kane oder Harry Kane")
     .setStyle(TextInputStyle.Short)
     .setMinLength(2)
     .setMaxLength(80)
@@ -129,19 +144,29 @@ export async function handleTop5ButtonModal(interaction) {
   }
 
   await interaction.deferReply({ ephemeral: true });
-  const playerName = interaction.fields.getTextInputValue("player_name");
-  const result = addTop5Submission(interaction.guildId, interaction.user, playerName, null, TOP5_TARGET);
+  const inputName = interaction.fields.getTextInputValue("player_name");
+  const result = await submitTop5WithMarketValue(
+    interaction.guildId,
+    interaction.user,
+    inputName,
+    TOP5_TARGET,
+  );
 
   if (!result.ok) {
+    if (result.lookupError) {
+      await interaction.editReply({ content: buildLookupError(result) });
+      return true;
+    }
+
     const message = result.duplicate
-      ? `✅ Du hast in dieser Runde bereits **${result.submission.playerName}** abgegeben.`
+      ? `✅ Du hast in dieser Runde bereits **${result.submission.playerName}** abgegeben. Marktwert: **${formatMarketValue(result.submission.marketValue)}**`
       : `❌ ${result.error || "Speichern fehlgeschlagen."}`;
     await interaction.editReply({ content: message });
     return true;
   }
 
   await interaction.channel?.send({
-    content: `Manager: ${interaction.user} hat **${result.submission.playerName}** abgegeben.`,
+    content: formatTop5SubmissionLine(interaction.user.id, result.submission),
     allowedMentions: { users: [interaction.user.id], parse: [] },
   }).catch(() => null);
 
@@ -149,8 +174,12 @@ export async function handleTop5ButtonModal(interaction) {
     await interaction.channel?.send({ embeds: [buildTop5SummaryEmbed(result.submissions)] }).catch(() => null);
   }
 
+  const apiWarning = result.lookup?.ok
+    ? ""
+    : "\n⚠️ Kickbase war gerade nicht erreichbar. Die Abgabe wurde trotzdem gespeichert; der Marktwert steht daher auf **nicht verfügbar**.";
+
   await interaction.editReply({
-    content: `✅ Abgabe gespeichert: **${result.submission.playerName}** (${result.count}/${result.target})`,
+    content: `✅ Abgabe gespeichert: **${result.submission.playerName}** • MW: **${formatMarketValue(result.submission.marketValue)}** (${result.count}/${result.target})${apiWarning}`,
   });
   return true;
 }
