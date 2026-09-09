@@ -1,6 +1,7 @@
 import { PermissionFlagsBits } from "discord.js";
 import { buildErrorEmbed, buildKbbEmbed, buildSuccessEmbed } from "../utils/embeds.js";
 import { formatTransferPrice, getLatestLeagueTransfers } from "../utils/kickbaseFeed.js";
+import { getManagers } from "../utils/managerStore.js";
 
 const TEST_CHANNEL_ID = process.env.KBB_TEST_CHANNEL_ID || "1522249317656690929";
 
@@ -15,6 +16,15 @@ function escapeDiscordText(value) {
     .replace(/([*_~`>|])/g, "\\$1");
 }
 
+function normalizeManagerName(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
 function formatWhen(createdAt) {
   if (!createdAt) return "Zeitpunkt unbekannt";
   const timestamp = Math.floor(new Date(createdAt).getTime() / 1000);
@@ -22,21 +32,76 @@ function formatWhen(createdAt) {
   return `<t:${timestamp}:f> • <t:${timestamp}:R>`;
 }
 
-function transferLine(transfer, index) {
-  const buyer = escapeDiscordText(transfer.buyer);
-  const seller = escapeDiscordText(transfer.seller);
+async function buildDiscordManagerMap(guild) {
+  const managers = getManagers(guild.id);
+  const map = new Map();
+
+  const resolved = await Promise.all(managers.map(async manager => {
+    const member = await guild.members.fetch(manager.userId).catch(() => null);
+    if (!member) return null;
+
+    const names = new Set([
+      manager.username,
+      member.displayName,
+      member.nickname,
+      member.user?.username,
+      member.user?.globalName,
+    ].filter(Boolean));
+
+    return {
+      userId: manager.userId,
+      names: [...names],
+    };
+  }));
+
+  for (const entry of resolved.filter(Boolean)) {
+    for (const name of entry.names) {
+      const key = normalizeManagerName(name);
+      if (!key) continue;
+
+      // Only keep an unambiguous mapping. If two Discord users normalize to the
+      // same name, remove it instead of risking a wrong mention.
+      if (map.has(key) && map.get(key) !== entry.userId) {
+        map.set(key, null);
+      } else if (!map.has(key)) {
+        map.set(key, entry.userId);
+      }
+    }
+  }
+
+  return map;
+}
+
+function managerLabel(kickbaseName, discordManagerMap) {
+  const safeName = escapeDiscordText(kickbaseName);
+  const userId = discordManagerMap.get(normalizeManagerName(kickbaseName));
+
+  return {
+    text: userId ? `**${safeName}** (<@${userId}>)` : `**${safeName}**`,
+    userId: userId || null,
+  };
+}
+
+function transferLine(transfer, index, discordManagerMap) {
+  const buyer = managerLabel(transfer.buyer, discordManagerMap);
+  const seller = transfer.seller === "KICKBASE"
+    ? null
+    : managerLabel(transfer.seller, discordManagerMap);
   const player = escapeDiscordText(transfer.playerName);
   const price = formatTransferPrice(transfer.price);
 
   const source = transfer.seller === "KICKBASE"
     ? "vom **KICKBASE-Markt**"
-    : `von **${seller}**`;
+    : `von ${seller.text}`;
 
-  return [
-    `### ${index + 1}. 💸 ${player}`,
-    `**${buyer}** hat **${player}** ${source} für **${price}** gekauft.`,
-    formatWhen(transfer.createdAt),
-  ].join("\n");
+  return {
+    text: [
+      `### ${index + 1}. 💸 ${player}`,
+      `${buyer.text} hat **${player}** ${source} für **${price}** gekauft.`,
+      formatWhen(transfer.createdAt),
+    ].join("\n"),
+    mentionUserIds: [buyer.userId, seller?.userId].filter(Boolean),
+  };
 }
 
 async function ensureAcknowledged(interaction) {
@@ -88,11 +153,17 @@ export async function runKickbaseFeedTest(interaction) {
 
   console.log(`✅ Kickbase feed loaded: ${result.transfers.length} transfer(s)`);
 
+  const discordManagerMap = await buildDiscordManagerMap(interaction.guild);
+  const renderedTransfers = result.transfers.map((transfer, index) => (
+    transferLine(transfer, index, discordManagerMap)
+  ));
+  const mentionUserIds = [...new Set(renderedTransfers.flatMap(entry => entry.mentionUserIds))];
+
   const description = result.transfers.length
     ? [
         `Live aus **${escapeDiscordText(result.leagueName)}** • Liga-ID \`${result.leagueId}\``,
         "",
-        ...result.transfers.map(transferLine),
+        ...renderedTransfers.map(entry => entry.text),
       ].join("\n\n")
     : [
         `Live aus **${escapeDiscordText(result.leagueName)}** • Liga-ID \`${result.leagueId}\``,
@@ -108,7 +179,7 @@ export async function runKickbaseFeedTest(interaction) {
 
   const sent = await channel.send({
     embeds: [embed],
-    allowedMentions: { parse: [] },
+    allowedMentions: { users: mentionUserIds, parse: [] },
   }).catch(error => {
     console.error("❌ Transfer-feed test post failed:", error?.message || error);
     return null;
@@ -121,7 +192,10 @@ export async function runKickbaseFeedTest(interaction) {
   return interaction.editReply({
     embeds: [buildSuccessEmbed(
       "✅ Transfer-Feed getestet",
-      `Die neuesten **${result.transfers.length}** Kauf-Transfers wurden ausschließlich in <#${TEST_CHANNEL_ID}> ausgegeben.`,
+      [
+        `Die neuesten **${result.transfers.length}** Kauf-Transfers wurden ausschließlich in <#${TEST_CHANNEL_ID}> ausgegeben.`,
+        `Discord-Zuordnung: **${mentionUserIds.length} Manager** in dieser Ausgabe erkannt.`,
+      ].join("\n"),
     )],
   });
 }
