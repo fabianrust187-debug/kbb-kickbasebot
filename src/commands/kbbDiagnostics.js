@@ -4,6 +4,7 @@ import { getGuildSettings } from "../utils/guildSettings.js";
 import { getKickbaseConnectionInfo } from "../utils/kickbaseInfo.js";
 
 const DEFAULT_TOP5_CHANNEL_ID = process.env.TOP5_CHANNEL_ID || "1522249357179617331";
+const DEFAULT_TEST_CHANNEL_ID = process.env.KBB_TEST_CHANNEL_ID || "1522249317656690929";
 
 function hasManageServerPermission(interaction) {
   return !!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
@@ -117,9 +118,11 @@ export async function runKbbHelp(interaction) {
       "• `/kbb manager-remove` — Manager entfernen *(Admin)*",
       "• `/kbb manager-list` — Teilnehmerliste anzeigen",
       "• `/kbb kickbase-info` — Kickbase-Verbindung und Liga-ID prüfen *(Admin)*",
+      "• `/kbb feed-test` — neueste Kickbase-Käufe nur im Testkanal ausgeben *(Admin)*",
       "• `/kbb setup` — Channels setzen *(Admin)*",
       "",
       `**Top-5-Abgabe Channel:** <#${top5ChannelId}>`,
+      `**Feature-Test Channel:** <#${DEFAULT_TEST_CHANNEL_ID}>`,
       "**Automatische Fristprüfung:** jeden Dienstag um **22:00 Uhr (Europe/Berlin)**.",
     ].join("\n"),
   });
