@@ -10,9 +10,11 @@ import {
 import { buildErrorEmbed, buildKbbEmbed, buildSuccessEmbed } from "../utils/embeds.js";
 import { getGuildSettings, setGuildSettings } from "../utils/guildSettings.js";
 import { addManager, getManagers, removeManager } from "../utils/managerStore.js";
+import { formatMarketValue } from "../utils/kickbaseApi.js";
 import { publishMissingTop5 } from "../utils/top5Deadline.js";
+import { getDurableTop5History } from "../utils/top5History.js";
+import { formatTop5SubmissionLine, submitTop5WithMarketValue } from "../utils/top5SubmissionService.js";
 import {
-  addTop5Submission,
   getTop5SubmissionForUser,
   getTop5Submissions,
   resetTop5Round,
@@ -90,6 +92,7 @@ function buildRulesDescription() {
     "• Jeder Manager muss pro Spieltag einen eigenen **Top-5-Spieler** abgeben.",
     "• Top-5 bedeutet: die 5 Spieler im eigenen Team, die an diesem Spieltag die meisten Punkte gemacht haben.",
     "• **Abgabefrist ist Dienstag um 22:00 Uhr.**",
+    "• Der Marktwert wird bei der Abgabe automatisch aus Kickbase gelesen und mit dem Zeitpunkt der Abgabe gespeichert.",
     "",
     "### ⚖️ Fairplay",
     "Nicht erlaubt sind Absprachen, Pushen, Marktmanipulation, Beleidigungen und bewusstes Ausnutzen von Schlupflöchern.",
@@ -115,6 +118,7 @@ function buildLeagueEmbed(interaction) {
       `• **Einsatz:** ${LEAGUE_INFO.entryFee}`,
       `• **Zahlung:** ${LEAGUE_INFO.payment}`,
       `• **Top-5-Frist:** Dienstag, 22:00 Uhr`,
+      `• **Top-5-Marktwerte:** automatisch gespeichert`,
       "",
       "**Discord Setup**",
       `• Managerliste: **${managers.length}/${TOP5_TARGET}**`,
@@ -127,7 +131,7 @@ function buildLeagueEmbed(interaction) {
 
 function buildTop5SummaryEmbed(submissions) {
   const list = submissions.map((entry, index) => (
-    `**${index + 1}.** <@${entry.userId}> — **${entry.playerName}** *(MW: noch nicht verfügbar)*`
+    `**${index + 1}.** <@${entry.userId}> — **${entry.playerName}** — MW: **${formatMarketValue(entry.marketValue)}**`
   ));
   return buildKbbEmbed({
     title: "✅ Top-5-Abgabe komplett",
@@ -136,8 +140,6 @@ function buildTop5SummaryEmbed(submissions) {
       "",
       "## 📋 Zusammenfassung",
       ...list,
-      "",
-      "Kickbase-Marktwerte sind vorbereitet, aber noch nicht automatisch angebunden.",
     ].join("\n"),
     footer: "187 KICKBASEBANDE • Top-5-Abgabe",
   });
@@ -154,7 +156,7 @@ function buildTop5StatusEmbed(interaction) {
       `**Frist:** Dienstag, 22:00 Uhr`,
       "",
       submissions.length
-        ? submissions.map((entry, index) => `**${index + 1}.** <@${entry.userId}> — **${entry.playerName}**`).join("\n")
+        ? submissions.map((entry, index) => `**${index + 1}.** <@${entry.userId}> — **${entry.playerName}** — MW: **${formatMarketValue(entry.marketValue)}**`).join("\n")
         : "Noch keine Abgaben gespeichert.",
       managers.length < TOP5_TARGET
         ? `\n⚠️ ${TOP5_TARGET - managers.length} Teilnehmer noch nicht in der Managerliste. Die Fristprüfung funktioniert trotzdem.`
@@ -175,7 +177,8 @@ async function runHelp(interaction) {
       "• `/kbb league` — Liga-Infos anzeigen",
       "• `/kbb name` — Kickbase-Namen in einem privaten Fenster eintragen",
       "• `/kbb top5` — private Top-5-Abgabe starten",
-      "• `/kbb top5-status` — Abgabestand anzeigen",
+      "• `/kbb top5-status` — Abgabestand inklusive Marktwert anzeigen",
+      "• `/kbb top5-history` — gespeicherte Top-5-Abgaben und Marktwerte abrufen",
       "• `/kbb top5-missing` — Fristprüfung manuell posten *(Admin)*",
       "• `/kbb top5-reset` — neue Top-5-Runde starten *(Admin)*",
       "• `/kbb manager-add` — Manager zur Teilnehmerliste hinzufügen *(Admin)*",
@@ -240,7 +243,12 @@ async function runTop5(interaction) {
   }
 
   const existing = getTop5SubmissionForUser(interaction.guildId, interaction.user.id);
-  if (existing) return interaction.reply({ content: `✅ Du hast bereits **${existing.playerName}** abgegeben.`, ephemeral: true });
+  if (existing) {
+    return interaction.reply({
+      content: `✅ Du hast bereits **${existing.playerName}** abgegeben. Marktwert bei Abgabe: **${formatMarketValue(existing.marketValue)}**`,
+      ephemeral: true,
+    });
+  }
 
   const modal = new ModalBuilder()
     .setCustomId(`kbb_top5_submit:${interaction.guildId}:${interaction.user.id}`)
@@ -260,6 +268,50 @@ async function runTop5(interaction) {
 async function runTop5Status(interaction) {
   if (!interaction.guildId) return interaction.reply({ embeds: [buildErrorEmbed("Nur auf einem Server nutzbar.")], ephemeral: true });
   return interaction.reply({ embeds: [buildTop5StatusEmbed(interaction)], ephemeral: true });
+}
+
+async function runTop5History(interaction) {
+  if (!interaction.guildId || !interaction.guild) {
+    return interaction.reply({ embeds: [buildErrorEmbed("Nur auf einem Server nutzbar.")], ephemeral: true });
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  const manager = interaction.options.getUser("manager");
+  const limit = interaction.options.getInteger("anzahl") || 20;
+  const history = await getDurableTop5History(interaction.guild, {
+    userId: manager?.id || null,
+    limit,
+  });
+
+  if (!history.ok) {
+    return interaction.editReply({ embeds: [buildErrorEmbed(history.error || "Top-5-Historie konnte nicht geladen werden.")] });
+  }
+
+  if (!history.entries.length) {
+    return interaction.editReply({ embeds: [buildKbbEmbed({
+      title: "📚 Top-5-Historie",
+      description: manager
+        ? `Für ${manager} wurden noch keine gespeicherten Top-5-Abgaben gefunden.`
+        : "Noch keine gespeicherten Top-5-Abgaben gefunden.",
+    })] });
+  }
+
+  const lines = history.entries.map((entry, index) => {
+    const timestamp = Math.floor(new Date(entry.createdAt).getTime() / 1000);
+    return `**${index + 1}.** <@${entry.userId}> — **${entry.playerName}** — MW: **${formatMarketValue(entry.marketValue)}** — <t:${timestamp}:d>`;
+  });
+
+  return interaction.editReply({ embeds: [buildKbbEmbed({
+    title: "📚 Top-5-Historie",
+    description: [
+      manager ? `Gefiltert nach: ${manager}` : `Letzte **${history.entries.length}** gespeicherte Abgaben`,
+      "",
+      ...lines,
+      "",
+      "Die Marktwerte entsprechen dem Wert zum Zeitpunkt der jeweiligen Abgabe.",
+    ].join("\n"),
+    footer: "187 KICKBASEBANDE • gespeicherte Top-5-Daten",
+  })] });
 }
 
 async function runTop5Missing(interaction) {
@@ -433,20 +485,43 @@ async function handleTop5ModalSubmit(interaction) {
   }
 
   await interaction.deferReply({ ephemeral: true });
-  const playerName = interaction.fields.getTextInputValue("player_name");
-  const result = addTop5Submission(interaction.guildId, interaction.user, playerName, null, TOP5_TARGET);
+  const inputName = interaction.fields.getTextInputValue("player_name");
+  const result = await submitTop5WithMarketValue(interaction.guildId, interaction.user, inputName, TOP5_TARGET);
 
   if (!result.ok) {
+    if (result.lookupError) {
+      const suggestions = result.lookup?.suggestions?.length
+        ? `\n\nMögliche Treffer:\n${result.lookup.suggestions.map(name => `• **${name}**`).join("\n")}`
+        : "";
+      await interaction.editReply({
+        content: `❌ ${result.error || "Spieler konnte bei Kickbase nicht eindeutig gefunden werden."}${suggestions}\n\nBitte den Spielernamen möglichst vollständig eingeben und erneut versuchen.`,
+      });
+      return true;
+    }
+
     const message = result.duplicate
-      ? `✅ Du hast bereits **${result.submission.playerName}** abgegeben.`
+      ? `✅ Du hast bereits **${result.submission.playerName}** abgegeben. Marktwert: **${formatMarketValue(result.submission.marketValue)}**`
       : `❌ ${result.error || "Speichern fehlgeschlagen."}`;
     await interaction.editReply({ content: message });
     return true;
   }
 
-  await interaction.channel?.send({ content: `Manager: ${interaction.user} hat **${result.submission.playerName}** abgegeben.` }).catch(() => null);
-  if (result.complete) await interaction.channel?.send({ embeds: [buildTop5SummaryEmbed(result.submissions)] }).catch(() => null);
-  await interaction.editReply({ content: `✅ Abgabe gespeichert: **${result.submission.playerName}** (${result.count}/${result.target})` });
+  await interaction.channel?.send({
+    content: formatTop5SubmissionLine(interaction.user.id, result.submission),
+    allowedMentions: { users: [interaction.user.id], parse: [] },
+  }).catch(() => null);
+
+  if (result.complete) {
+    await interaction.channel?.send({ embeds: [buildTop5SummaryEmbed(result.submissions)] }).catch(() => null);
+  }
+
+  const apiWarning = result.lookup?.ok
+    ? ""
+    : "\n⚠️ Kickbase war gerade nicht erreichbar oder noch nicht konfiguriert. Die Abgabe wurde trotzdem gespeichert; der Marktwert steht daher auf **nicht verfügbar**.";
+
+  await interaction.editReply({
+    content: `✅ Abgabe gespeichert: **${result.submission.playerName}** • MW: **${formatMarketValue(result.submission.marketValue)}** (${result.count}/${result.target})${apiWarning}`,
+  });
   return true;
 }
 
@@ -459,7 +534,20 @@ export default {
     .addSubcommand(sub => sub.setName("league").setDescription("Liga-Informationen anzeigen"))
     .addSubcommand(sub => sub.setName("name").setDescription("Kickbase-Namen über privates Fenster eintragen"))
     .addSubcommand(sub => sub.setName("top5").setDescription("Private Top-5-Abgabe starten"))
-    .addSubcommand(sub => sub.setName("top5-status").setDescription("Top-5-Abgabestand anzeigen"))
+    .addSubcommand(sub => sub.setName("top5-status").setDescription("Top-5-Abgabestand inklusive Marktwert anzeigen"))
+    .addSubcommand(sub => sub
+      .setName("top5-history")
+      .setDescription("Gespeicherte Top-5-Abgaben und Marktwerte anzeigen")
+      .addUserOption(option => option
+        .setName("manager")
+        .setDescription("Optional nur Abgaben eines Managers anzeigen")
+        .setRequired(false))
+      .addIntegerOption(option => option
+        .setName("anzahl")
+        .setDescription("Anzahl der Einträge (1-50, Standard 20)")
+        .setMinValue(1)
+        .setMaxValue(50)
+        .setRequired(false)))
     .addSubcommand(sub => sub
       .setName("top5-missing")
       .setDescription("Fehlende oder verspätete Top-5-Abgaben öffentlich ausgeben")
@@ -492,6 +580,7 @@ export default {
     if (sub === "name") return runName(interaction);
     if (sub === "top5") return runTop5(interaction);
     if (sub === "top5-status") return runTop5Status(interaction);
+    if (sub === "top5-history") return runTop5History(interaction);
     if (sub === "top5-missing") return runTop5Missing(interaction);
     if (sub === "top5-reset") return runTop5Reset(interaction);
     if (sub === "manager-add") return runManagerAdd(interaction);
