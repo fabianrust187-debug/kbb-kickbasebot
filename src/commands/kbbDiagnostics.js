@@ -65,7 +65,7 @@ export async function runKickbaseInfo(interaction) {
 
     if (!info.configuredLeagueId) {
       lines.push(
-        "💡 Die Liga-ID wurde automatisch über den Lig Namen gefunden. Du kannst sie optional in Discloud fest hinterlegen:",
+        "💡 Die Liga-ID wurde automatisch über den Liga-Namen gefunden. Du kannst sie optional in Discloud fest hinterlegen:",
         `\`KICKBASE_LEAGUE_ID=${info.league.id}\``,
       );
     } else {
