@@ -13,7 +13,14 @@ function isRoundBoundary(message) {
     || content.includes("Neue Top-5-Runde gestartet");
 }
 
-function parseSubmission(message) {
+function parseMarketValue(content) {
+  const match = String(content || "").match(/(?:MW|Marktwert):\s*\*\*([\d.\s]+)\s*€\*\*/i);
+  if (!match) return null;
+  const value = Number(match[1].replace(/[^0-9]/g, ""));
+  return Number.isFinite(value) ? value : null;
+}
+
+export function parseTop5SubmissionMessage(message) {
   const content = String(message?.content || "");
   const match = content.match(/Manager:\s*<@!?(\d+)>\s+hat\s+\*\*(.+?)\*\*\s+abgegeben\./s);
   if (!match) return null;
@@ -22,7 +29,8 @@ function parseSubmission(message) {
     userId: match[1],
     userTag: null,
     playerName: match[2].trim(),
-    marketValue: null,
+    marketValue: parseMarketValue(content),
+    marketValueSource: parseMarketValue(content) !== null ? "discord-recovery" : null,
     createdAt: message.createdAt?.toISOString?.() || new Date(message.createdTimestamp || Date.now()).toISOString(),
     messageId: message.id,
   };
@@ -36,7 +44,7 @@ function parseRosterSnapshot(message) {
   return [...new Set(matches.map(match => match[1]))];
 }
 
-async function fetchHistory(channel, maxMessages = MAX_MESSAGES) {
+export async function fetchTop5ChannelHistory(channel, maxMessages = MAX_MESSAGES) {
   const all = [];
   let before;
 
@@ -71,12 +79,12 @@ export async function recoverKbbStateFromDiscord(guild, { channelId = null, targ
     return { ok: false, error: `Top-5-Channel ${resolvedChannelId} nicht lesbar.` };
   }
 
-  const history = await fetchHistory(channel);
+  const history = await fetchTop5ChannelHistory(channel);
   const botId = guild.client.user?.id;
   const botMessages = history.filter(message => message.author?.id === botId);
 
   const allSubmissionEntries = botMessages
-    .map(parseSubmission)
+    .map(parseTop5SubmissionMessage)
     .filter(Boolean);
 
   let lastBoundaryIndex = -1;
@@ -89,7 +97,7 @@ export async function recoverKbbStateFromDiscord(guild, { channelId = null, targ
     : botMessages;
 
   const currentEntries = currentMessages
-    .map(parseSubmission)
+    .map(parseTop5SubmissionMessage)
     .filter(Boolean);
 
   const uniqueCurrent = [];
