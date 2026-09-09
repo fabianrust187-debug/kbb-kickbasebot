@@ -1,6 +1,6 @@
 {
   "name": "kbb-kickbasebot",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "187 KICKBASEBANDE Discord Bot for Kickbase league management",
   "type": "module",
   "main": "src/bot.js",
