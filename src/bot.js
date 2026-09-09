@@ -8,6 +8,7 @@ import {
 import { registerConfiguredCommands, registerCommandsForGuild } from "./registerCommands.js";
 import pingCommand from "./commands/ping.js";
 import kbbCommand from "./commands/kbb.js";
+import { runKbbHelp, runKickbaseInfo } from "./commands/kbbDiagnostics.js";
 import { startTop5DeadlineScheduler } from "./utils/top5Deadline.js";
 import { handleTop5Button, handleTop5ButtonModal } from "./utils/top5ButtonHandler.js";
 
@@ -56,6 +57,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (!interaction.isChatInputCommand()) return;
+
+    if (interaction.commandName === "kbb") {
+      const subcommand = interaction.options.getSubcommand(false);
+      if (subcommand === "kickbase-info") return runKickbaseInfo(interaction);
+      if (subcommand === "help") return runKbbHelp(interaction);
+    }
 
     const command = commands.get(interaction.commandName);
     if (!command) {
