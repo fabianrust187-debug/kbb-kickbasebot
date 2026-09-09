@@ -67,7 +67,8 @@ function extractMarketValue(data) {
 function toPlayer(record) {
   if (!record || typeof record !== "object") return null;
 
-  const id = String(record.i ?? record.id ?? record.pid ?? record.playerId ?? "").trim();
+  // Search responses use `pi`, while detail responses use `i`.
+  const id = String(record.pi ?? record.i ?? record.id ?? record.pid ?? record.playerId ?? "").trim();
   if (!id) return null;
 
   const firstName = String(record.fn ?? record.firstName ?? record.firstname ?? "").trim();
@@ -231,7 +232,20 @@ async function resolveLeagueId() {
 }
 
 async function searchPlayers(query) {
-  const data = await apiGet(`/competitions/${DEFAULT_COMPETITION_ID}/players/search`, { query });
+  const leagueId = await resolveLeagueId();
+  if (!leagueId) {
+    const error = new Error(`Kickbase-Liga \"${DEFAULT_LEAGUE_NAME}\" konnte nicht aufgelöst werden.`);
+    error.code = "LEAGUE_NOT_FOUND";
+    throw error;
+  }
+
+  const data = await apiGet(`/competitions/${DEFAULT_COMPETITION_ID}/players/search`, {
+    leagueId,
+    query,
+    start: 0,
+    max: 20,
+  });
+
   return extractArray(data).map(toPlayer).filter(Boolean);
 }
 
