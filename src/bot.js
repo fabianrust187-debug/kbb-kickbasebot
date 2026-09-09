@@ -14,6 +14,7 @@ import { runTop5Start } from "./commands/kbbTop5Start.js";
 import { startTop5DeadlineScheduler } from "./utils/top5Deadline.js";
 import { startKickbaseTransferFeedScheduler } from "./utils/kickbaseTransferFeedScheduler.js";
 import { startBundesligaGoalFeedScheduler } from "./utils/bundesligaGoalFeedScheduler.js";
+import { startChampionsLeagueGoalTestScheduler } from "./utils/championsLeagueGoalTestScheduler.js";
 import { handleTop5Button, handleTop5ButtonModal } from "./utils/top5ButtonHandler.js";
 import { runTop5ResetWithUi } from "./utils/top5ResetHandler.js";
 
@@ -45,6 +46,9 @@ client.once(Events.ClientReady, async () => {
 
   startBundesligaGoalFeedScheduler(client);
   console.log("⚽ Experimental Bundesliga goal feed scheduler started.");
+
+  startChampionsLeagueGoalTestScheduler(client);
+  console.log("🧪 Liverpool vs Atletico Champions League goal test scheduler started.");
 
   console.log("🧪 Kickbase feed-test route active.");
 });
