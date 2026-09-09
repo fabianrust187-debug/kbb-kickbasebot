@@ -8,6 +8,7 @@
 - Nach der Dienstags-Auswertung wird die Runde geschlossen und der Abgabe-Button entfernt.
 - Zwischen Dienstag 22:00 Uhr und Freitag 20:00 Uhr wird keine neue reguläre Runde automatisch gestartet.
 - Ein Deploy/Restart außerhalb einer laufenden regulären Runde erzeugt keinen neuen Button.
+- Auch der Fallback über `/kbb top5` akzeptiert nach Ablauf der Deadline keine neue Abgabe mehr.
 
 ## Englische Wochen
 
