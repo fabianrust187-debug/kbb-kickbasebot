@@ -11,6 +11,7 @@ import kbbCommand from "./commands/kbb.js";
 import { runKbbHelp, runKickbaseInfo } from "./commands/kbbDiagnostics.js";
 import { startTop5DeadlineScheduler } from "./utils/top5Deadline.js";
 import { handleTop5Button, handleTop5ButtonModal } from "./utils/top5ButtonHandler.js";
+import { runTop5ResetWithUi } from "./utils/top5ResetHandler.js";
 
 const client = new Client({
   intents: [
@@ -61,6 +62,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.commandName === "kbb") {
       const subcommand = interaction.options.getSubcommand(false);
       if (subcommand === "kickbase-info") return runKickbaseInfo(interaction);
+      if (subcommand === "top5-reset") return runTop5ResetWithUi(interaction);
       if (subcommand === "help") return runKbbHelp(interaction);
     }
 
