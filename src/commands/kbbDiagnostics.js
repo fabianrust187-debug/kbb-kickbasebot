@@ -126,6 +126,7 @@ export async function runKbbHelp(interaction) {
       `**Top-5-Abgabe Channel:** <#${top5ChannelId}>`,
       `**Transfermarkt Live-Feed:** <#${DEFAULT_TRANSFER_CHANNEL_ID}> — automatische Prüfung jede Minute`,
       `**Feature-Test Channel:** <#${DEFAULT_TEST_CHANNEL_ID}>`,
+      "**Bundesliga Tor-Livefeed (TEST):** automatische Prüfung ca. alle **30 Sekunden**; Tore, Vorlagen und KBB-Manager-Zuordnung werden nur im Feature-Test-Channel ausgegeben.",
       "**Regulärer Rundenstart:** Freitag um **20:00 Uhr (Europe/Berlin)**.",
       "**Abgabefrist:** Dienstag um **22:00 Uhr (Europe/Berlin)**.",
       "Nach der Dienstagsfrist bleibt der Abgabe-Button weg, bis die nächste Runde am Freitag startet.",
