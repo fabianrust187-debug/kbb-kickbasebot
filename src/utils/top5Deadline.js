@@ -1,7 +1,8 @@
 import { getGuildSettings, setGuildSettings } from "./guildSettings.js";
 import { getManagers } from "./managerStore.js";
 import { ensureManagerRosterSnapshot, recoverKbbStateFromDiscord } from "./top5Recovery.js";
-import { ensureTop5SubmitButton } from "./top5Button.js";
+import { cleanupTop5SubmitButtons, ensureTop5SubmitButton } from "./top5Button.js";
+import { startTop5Round } from "./top5RoundStart.js";
 import { getTop5Round, getTop5Submissions, resetTop5Round } from "./top5Store.js";
 
 const DEFAULT_TOP5_CHANNEL_ID = process.env.TOP5_CHANNEL_ID || "1522249357179617331";
@@ -51,6 +52,25 @@ function addLocalDays(parts, days) {
   };
 }
 
+function currentRegularWindowFriday(parts) {
+  const index = WEEKDAY_INDEX[parts.weekday];
+  if (index === undefined) return null;
+
+  if (parts.weekday === "Fri" && parts.hour < 20) return null;
+  if (parts.weekday === "Tue" && parts.hour >= 22) return null;
+  if (["Wed", "Thu"].includes(parts.weekday)) return null;
+
+  let daysBack;
+  if (parts.weekday === "Fri") daysBack = 0;
+  else if (parts.weekday === "Sat") daysBack = 1;
+  else if (parts.weekday === "Sun") daysBack = 2;
+  else if (parts.weekday === "Mon") daysBack = 3;
+  else if (parts.weekday === "Tue") daysBack = 4;
+  else return null;
+
+  return addLocalDays(parts, -daysBack);
+}
+
 export function getRoundDeadline(guildId) {
   const round = getTop5Round(guildId);
   if (!round?.createdAt) return null;
@@ -59,9 +79,7 @@ export function getRoundDeadline(guildId) {
   const weekday = WEEKDAY_INDEX[created.weekday] ?? 0;
   let daysUntilDeadline = (DEADLINE_WEEKDAY_INDEX - weekday + 7) % 7;
 
-  if (daysUntilDeadline === 0 && created.hour >= 22) {
-    daysUntilDeadline = 7;
-  }
+  if (daysUntilDeadline === 0 && created.hour >= 22) daysUntilDeadline = 7;
 
   const date = addLocalDays(created, daysUntilDeadline);
   const deadlineParts = { ...date, weekday: DEADLINE_WEEKDAY, hour: 22, minute: 0 };
@@ -109,17 +127,14 @@ export function getMissingTop5Managers(guildId, target = DEFAULT_TARGET, now = n
     timely.push({ ...manager, submission });
   }
 
-  const failed = [...missing, ...late];
-  const untrackedCount = Math.max(0, target - managers.length);
-
   return {
     managers,
     submissions,
     missing,
     late,
     timely,
-    failed,
-    untrackedCount,
+    failed: [...missing, ...late],
+    untrackedCount: Math.max(0, target - managers.length),
     deadline,
     deadlinePassed,
     target,
@@ -141,10 +156,18 @@ function appendRosterWarning(lines, result) {
   );
 }
 
-export function buildMissingTop5Message(result, { automatic = false } = {}) {
-  const heading = automatic
-    ? "## ⏰ Top-5-Abgabefrist beendet"
-    : "## 📋 Top-5-Fristprüfung";
+function appendRoundLifecycle(lines, { automatic = false, resetAfter = false } = {}) {
+  if (!automatic) return;
+  lines.push(
+    "",
+    resetAfter
+      ? "🔄 Die nächste Top-5-Runde wurde automatisch gestartet."
+      : "🔒 Diese Top-5-Runde ist beendet. Die nächste reguläre Runde startet **Freitag um 20:00 Uhr**.",
+  );
+}
+
+export function buildMissingTop5Message(result, { automatic = false, resetAfter = false } = {}) {
+  const heading = automatic ? "## ⏰ Top-5-Abgabefrist beendet" : "## 📋 Top-5-Fristprüfung";
 
   if (!result.failed.length) {
     const lines = [
@@ -155,12 +178,11 @@ export function buildMissingTop5Message(result, { automatic = false } = {}) {
         : `✅ Aktuell haben alle **${result.managers.length} hinterlegten Manager** ihre Top-5-Abgabe eingereicht.`,
     ];
     appendRosterWarning(lines, result);
-    if (automatic) lines.push("", "🔄 Die nächste Top-5-Runde wurde automatisch gestartet.");
+    appendRoundLifecycle(lines, { automatic, resetAfter });
     return lines.join("\n");
   }
 
   const lines = [heading, ""];
-
   if (result.deadlinePassed && result.deadline) {
     lines.push(`Folgende Manager haben bis **${result.deadline.label}** nicht rechtzeitig abgegeben:`, "");
   } else {
@@ -177,8 +199,7 @@ export function buildMissingTop5Message(result, { automatic = false } = {}) {
 
   lines.push("", `❌ **${result.failed.length}/${result.managers.length} hinterlegten Manager** haben nicht rechtzeitig abgegeben.`);
   appendRosterWarning(lines, result);
-  if (automatic) lines.push("", "🔄 Die nächste Top-5-Runde wurde automatisch gestartet.");
-
+  appendRoundLifecycle(lines, { automatic, resetAfter });
   return lines.join("\n");
 }
 
@@ -193,14 +214,14 @@ export async function publishMissingTop5(guild, { automatic = false, resetAfter 
   const settings = getGuildSettings(guild.id);
   const target = Number(process.env.TOP5_MANAGER_TARGET || DEFAULT_TARGET);
   const result = getMissingTop5Managers(guild.id, target, now);
-
   const channelId = settings.top5ChannelId || DEFAULT_TOP5_CHANNEL_ID;
   const channel = await guild.channels.fetch(channelId).catch(() => null);
+
   if (!channel?.isTextBased?.()) {
     return { ok: false, error: `Top-5-Channel ${channelId} nicht gefunden oder nicht beschreibbar.`, result };
   }
 
-  const content = buildMissingTop5Message(result, { automatic });
+  const content = buildMissingTop5Message(result, { automatic, resetAfter });
   const message = await channel.send({
     content,
     allowedMentions: { users: result.failed.map(manager => manager.userId), parse: [] },
@@ -213,6 +234,8 @@ export async function publishMissingTop5(guild, { automatic = false, resetAfter 
     if (!reset.ok) return { ok: false, error: reset.error || "Top-5-Runde konnte nicht zurückgesetzt werden.", result, message };
     await postRoundStartMarker(channel);
     await ensureTop5SubmitButton(guild, { channelId });
+  } else if (automatic && result.deadlinePassed) {
+    await cleanupTop5SubmitButtons(guild, { channelId }).catch(() => null);
   }
 
   return { ok: true, result, message };
@@ -233,7 +256,7 @@ async function recoverGuild(guild) {
   }
 }
 
-async function checkGuild(guild, now = new Date()) {
+async function checkDeadline(guild, now = new Date()) {
   const parts = berlinParts(now);
   const result = getMissingTop5Managers(guild.id, Number(process.env.TOP5_MANAGER_TARGET || DEFAULT_TARGET), now);
   const deadline = result.deadline;
@@ -244,7 +267,7 @@ async function checkGuild(guild, now = new Date()) {
   const settings = getGuildSettings(guild.id);
   if (settings.lastTop5DeadlineKey === deadline.dateKey) return;
 
-  const published = await publishMissingTop5(guild, { automatic: true, resetAfter: true, now });
+  const published = await publishMissingTop5(guild, { automatic: true, resetAfter: false, now });
   if (!published.ok) {
     console.warn(`⚠️ Top-5 deadline skipped for ${guild.id}: ${published.error}`);
     return;
@@ -255,6 +278,63 @@ async function checkGuild(guild, now = new Date()) {
     lastTop5DeadlineAt: new Date().toISOString(),
   });
   console.log(`✅ Top-5 deadline posted for ${guild.name} (${guild.id})`);
+}
+
+async function hasRegularStartMarker(channel, fridayDateKey, botId) {
+  if (!channel?.messages?.fetch) return false;
+  const recent = await channel.messages.fetch({ limit: 100 }).catch(() => null);
+  if (!recent) return false;
+
+  return [...recent.values()].some(message => {
+    if (message.author?.id !== botId) return false;
+    if (!String(message.content || "").includes("Neue Top-5-Runde gestartet")) return false;
+    const created = berlinParts(message.createdAt || new Date(message.createdTimestamp));
+    return localDateKey(created) === fridayDateKey && created.hour >= 20;
+  });
+}
+
+async function checkRegularRoundStart(guild, now = new Date()) {
+  const parts = berlinParts(now);
+  const friday = currentRegularWindowFriday(parts);
+  if (!friday) return;
+
+  const fridayDateKey = localDateKey(friday);
+  const settings = getGuildSettings(guild.id);
+  if (settings.lastTop5FridayStartKey === fridayDateKey) return;
+
+  const channelId = settings.top5ChannelId || DEFAULT_TOP5_CHANNEL_ID;
+  const channel = await guild.channels.fetch(channelId).catch(() => null);
+  if (!channel?.isTextBased?.()) return;
+
+  if (await hasRegularStartMarker(channel, fridayDateKey, guild.client.user?.id)) {
+    setGuildSettings(guild.id, { lastTop5FridayStartKey: fridayDateKey });
+    return;
+  }
+
+  const started = await startTop5Round(guild, guild.client.user, {
+    source: "scheduled",
+    channelId,
+  });
+
+  if (!started.ok) {
+    console.warn(`⚠️ Friday Top-5 start failed for ${guild.id}: ${started.error}`);
+    return;
+  }
+
+  setGuildSettings(guild.id, {
+    lastTop5FridayStartKey: fridayDateKey,
+    lastTop5FridayStartAt: new Date().toISOString(),
+  });
+  console.log(`✅ Top-5 round started for ${guild.name} (${guild.id}) — Friday window ${fridayDateKey}`);
+}
+
+async function cleanupOutsideRegularWindow(guild, now = new Date()) {
+  const parts = berlinParts(now);
+  if (currentRegularWindowFriday(parts)) return;
+
+  const settings = getGuildSettings(guild.id);
+  const channelId = settings.top5ChannelId || DEFAULT_TOP5_CHANNEL_ID;
+  await cleanupTop5SubmitButtons(guild, { channelId }).catch(() => null);
 }
 
 export function startTop5DeadlineScheduler(client) {
@@ -270,12 +350,12 @@ export function startTop5DeadlineScheduler(client) {
         console.error(`❌ Manager snapshot failed for ${guild.id}:`, err?.message || err);
       });
 
-      await ensureTop5SubmitButton(guild, { channelId }).catch(err => {
-        console.error(`❌ Top-5 button failed for ${guild.id}:`, err?.message || err);
+      await checkDeadline(guild).catch(err => {
+        console.error(`❌ Top-5 deadline check failed for ${guild.id}:`, err?.message || err);
       });
 
-      await checkGuild(guild).catch(err => {
-        console.error(`❌ Top-5 deadline check failed for ${guild.id}:`, err?.message || err);
+      await checkRegularRoundStart(guild).catch(err => {
+        console.error(`❌ Top-5 Friday start failed for ${guild.id}:`, err?.message || err);
       });
     }
   };
@@ -285,6 +365,7 @@ export function startTop5DeadlineScheduler(client) {
       await recoverGuild(guild).catch(err => {
         console.error(`❌ KBB recovery failed for ${guild.id}:`, err?.message || err);
       });
+      await cleanupOutsideRegularWindow(guild).catch(() => null);
     }
     await run();
   };
