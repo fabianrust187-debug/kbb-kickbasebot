@@ -18,13 +18,32 @@ function addKbbDiagnosticSubcommands(json) {
 
   if (!Array.isArray(json.options)) json.options = [];
 
-  const exists = json.options.some(option => option?.type === 1 && option?.name === "kickbase-info");
-  if (!exists) {
-    json.options.push({
+  const diagnostics = [
+    {
       type: 1,
       name: "kickbase-info",
       description: "Kickbase-Verbindung und Liga-ID prüfen",
-    });
+    },
+    {
+      type: 1,
+      name: "feed-test",
+      description: "Neueste Kickbase-Transfers nur im Testkanal ausgeben",
+      options: [
+        {
+          type: 4,
+          name: "anzahl",
+          description: "Anzahl der neuesten Kauf-Transfers (1-15, Standard 10)",
+          required: false,
+          min_value: 1,
+          max_value: 15,
+        },
+      ],
+    },
+  ];
+
+  for (const definition of diagnostics) {
+    const exists = json.options.some(option => option?.type === 1 && option?.name === definition.name);
+    if (!exists) json.options.push(definition);
   }
 
   return json;
