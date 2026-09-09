@@ -39,19 +39,36 @@ function transferLine(transfer, index) {
   ].join("\n");
 }
 
+async function ensureAcknowledged(interaction) {
+  if (interaction.deferred || interaction.replied) return;
+  await interaction.deferReply({ ephemeral: true });
+}
+
 export async function runKickbaseFeedTest(interaction) {
   if (!interaction.guildId || !interaction.guild) {
+    if (interaction.deferred || interaction.replied) {
+      return interaction.editReply({ embeds: [buildErrorEmbed("Nur auf einem Server nutzbar.")] });
+    }
     return interaction.reply({ embeds: [buildErrorEmbed("Nur auf einem Server nutzbar.")], ephemeral: true });
   }
 
   if (!hasManageServerPermission(interaction)) {
+    if (interaction.deferred || interaction.replied) {
+      return interaction.editReply({ embeds: [buildErrorEmbed("Du brauchst Manage Server oder Administrator.")] });
+    }
     return interaction.reply({ embeds: [buildErrorEmbed("Du brauchst Manage Server oder Administrator.")], ephemeral: true });
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  await ensureAcknowledged(interaction);
 
   const amount = interaction.options.getInteger("anzahl") || 10;
-  const channel = await interaction.guild.channels.fetch(TEST_CHANNEL_ID).catch(() => null);
+  console.log(`🧪 Loading Kickbase transfer feed: requested=${amount}, guild=${interaction.guildId}`);
+
+  const channel = await interaction.guild.channels.fetch(TEST_CHANNEL_ID).catch(error => {
+    console.error("❌ Test channel fetch failed:", error?.message || error);
+    return null;
+  });
+
   if (!channel?.isTextBased?.()) {
     return interaction.editReply({
       embeds: [buildErrorEmbed(`Testkanal <#${TEST_CHANNEL_ID}> wurde nicht gefunden oder ist nicht beschreibbar.`)],
@@ -60,6 +77,7 @@ export async function runKickbaseFeedTest(interaction) {
 
   const result = await getLatestLeagueTransfers({ limit: amount });
   if (!result.ok) {
+    console.error(`❌ Kickbase feed-test failed [${result.code || "UNKNOWN"}]: ${result.error || "Unknown error"}`);
     return interaction.editReply({ embeds: [buildErrorEmbed([
       "Kickbase-Transferfeed konnte nicht geladen werden.",
       "",
@@ -67,6 +85,8 @@ export async function runKickbaseFeedTest(interaction) {
       result.code ? `**Code:** \`${result.code}\`` : "",
     ].filter(Boolean).join("\n"))] });
   }
+
+  console.log(`✅ Kickbase feed loaded: ${result.transfers.length} transfer(s)`);
 
   const description = result.transfers.length
     ? [
@@ -89,7 +109,10 @@ export async function runKickbaseFeedTest(interaction) {
   const sent = await channel.send({
     embeds: [embed],
     allowedMentions: { parse: [] },
-  }).catch(() => null);
+  }).catch(error => {
+    console.error("❌ Transfer-feed test post failed:", error?.message || error);
+    return null;
+  });
 
   if (!sent) {
     return interaction.editReply({ embeds: [buildErrorEmbed("Transfer-Feed konnte nicht in den Testkanal gepostet werden.")] });
