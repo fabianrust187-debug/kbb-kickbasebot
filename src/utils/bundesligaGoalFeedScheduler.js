@@ -3,12 +3,13 @@ import { buildKbbEmbed } from "./embeds.js";
 import { getManagers } from "./managerStore.js";
 import { getKickbaseLiveOwnership } from "./kickbaseLiveOwnership.js";
 
-const ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/ger.1/scoreboard";
-const ESPN_SUMMARY_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/ger.1/summary";
+const ESPN_LEAGUE = "ger.1";
+const ESPN_SCOREBOARD_BASE = `https://site.api.espn.com/apis/site/v2/sports/soccer/${ESPN_LEAGUE}/scoreboard`;
+const ESPN_SUMMARY_BASE = `https://site.api.espn.com/apis/site/v2/sports/soccer/${ESPN_LEAGUE}/summary`;
 const TEST_CHANNEL_ID = process.env.KBB_TEST_CHANNEL_ID || "1522249317656690929";
+const GOAL_CHANNEL_ID = process.env.KBB_GOAL_CHANNEL_ID || TEST_CHANNEL_ID;
 const POLL_INTERVAL_MS = Math.max(20_000, Number(process.env.KBB_GOAL_FEED_INTERVAL_MS || 30_000));
 const REQUEST_TIMEOUT_MS = Math.max(3000, Number(process.env.KBB_GOAL_FEED_TIMEOUT_MS || 10000));
-const INITIAL_BACKFILL = Math.max(0, Math.min(3, Number(process.env.KBB_GOAL_INITIAL_BACKFILL || 1)));
 const MARKER_PREFIX = "KBBGOAL:";
 const HISTORY_SCAN_LIMIT = 100;
 
@@ -37,6 +38,30 @@ function asNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function berlinDateKey(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Berlin",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+
+  const map = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${map.year}${map.month}${map.day}`;
+}
+
+function scoreboardUrl(date = new Date()) {
+  const url = new URL(ESPN_SCOREBOARD_BASE);
+  url.searchParams.set("dates", berlinDateKey(date));
+  return url.toString();
+}
+
+function summaryUrl(eventId) {
+  const url = new URL(ESPN_SUMMARY_BASE);
+  url.searchParams.set("event", String(eventId));
+  return url.toString();
+}
+
 async function fetchJson(url) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -47,22 +72,11 @@ async function fetchJson(url) {
       headers: { Accept: "application/json" },
     });
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status} for ${url}`);
-    }
-
+    if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
     return await response.json();
   } finally {
     clearTimeout(timeout);
   }
-}
-
-function getLiveEvents(scoreboard) {
-  const events = Array.isArray(scoreboard?.events) ? scoreboard.events : [];
-  return events.filter(event => {
-    const type = event?.status?.type || {};
-    return type.state === "in" && type.completed !== true;
-  });
 }
 
 function getCompetition(event) {
@@ -75,14 +89,23 @@ function getMatchTeams(event) {
   const home = competitors.find(item => item?.homeAway === "home") || competitors[0] || null;
   const away = competitors.find(item => item?.homeAway === "away") || competitors[1] || null;
 
-  const mapTeam = team => ({
-    id: String(team?.id ?? team?.team?.id ?? "").trim() || null,
-    name: String(team?.team?.displayName ?? team?.team?.shortDisplayName ?? team?.team?.name ?? "Unbekannt").trim(),
-    abbreviation: String(team?.team?.abbreviation ?? "").trim(),
-    score: asNumber(team?.score),
+  const mapTeam = item => ({
+    id: String(item?.id ?? item?.team?.id ?? "").trim() || null,
+    name: String(item?.team?.displayName ?? item?.team?.shortDisplayName ?? item?.team?.name ?? "Unbekannt").trim(),
+    score: asNumber(item?.score),
   });
 
   return { home: mapTeam(home), away: mapTeam(away) };
+}
+
+function isLive(event) {
+  const type = event?.status?.type || {};
+  return type.state === "in" && type.completed !== true;
+}
+
+function isCompleted(event) {
+  const type = event?.status?.type || {};
+  return type.completed === true || type.state === "post";
 }
 
 function participantRole(participant) {
@@ -97,6 +120,8 @@ function participantName(participant) {
     ?? participant?.athlete?.fullName
     ?? participant?.athlete?.shortName
     ?? participant?.displayName
+    ?? participant?.fullName
+    ?? participant?.shortName
     ?? participant?.name
     ?? "",
   ).trim();
@@ -104,25 +129,27 @@ function participantName(participant) {
 
 function parseAssistFromText(text) {
   const value = String(text || "");
-  const patterns = [
+  for (const pattern of [
     /assisted\s+by\s+([^.;]+)/i,
     /assist(?:ed)?\s*:\s*([^.;]+)/i,
     /vorlage\s*(?:von|:)\s*([^.;]+)/i,
-  ];
-
-  for (const pattern of patterns) {
+  ]) {
     const match = value.match(pattern);
-    if (!match?.[1]) continue;
-    return match[1].replace(/\s*\([^)]*\)\s*$/, "").trim();
+    if (match?.[1]) return match[1].replace(/\s*\([^)]*\)\s*$/, "").trim();
   }
-
   return null;
 }
 
 function parseScorerFromText(text) {
   const value = String(text || "");
-  const match = value.match(/\.\s*([^.(]+?)\s*\([^)]*\)\s*(?:right|left|header|converts|scores|with)/i);
-  return match?.[1]?.trim() || null;
+  for (const pattern of [
+    /^\s*([^,.]+?)\s+Goal/i,
+    /\.\s*([^.(]+?)\s*\([^)]*\)\s*(?:right|left|header|converts|scores|with)/i,
+  ]) {
+    const match = value.match(pattern);
+    if (match?.[1]) return match[1].trim();
+  }
+  return null;
 }
 
 function extractGoalPeople(goal) {
@@ -156,17 +183,41 @@ function parseMinute(value) {
   if (!match) return { minute: 999, added: 0, display: text || "?" };
   const minute = Number(match[1]);
   const added = Number(match[2] || 0);
-  return {
-    minute,
-    added,
-    display: added ? `${minute}+${added}` : String(minute),
-  };
+  return { minute, added, display: added ? `${minute}+${added}` : String(minute) };
 }
 
 function goalSortValue(goal, index) {
   const period = asNumber(goal?.period?.number ?? goal?.period) || 0;
   const clock = parseMinute(goal?.clock?.displayValue ?? goal?.clock);
   return period * 100000 + clock.minute * 100 + clock.added + index / 1000;
+}
+
+function scoringEntries(summary, event) {
+  const candidates = [
+    ...(Array.isArray(summary?.keyEvents) ? summary.keyEvents : []),
+    ...(Array.isArray(summary?.header?.competitions?.[0]?.details) ? summary.header.competitions[0].details : []),
+    ...(Array.isArray(summary?.details) ? summary.details : []),
+    ...(Array.isArray(getCompetition(event)?.details) ? getCompetition(event).details : []),
+  ].filter(item => item?.scoringPlay === true && item?.shootout !== true);
+
+  const seen = new Set();
+  return candidates.filter((goal, index) => {
+    const athletes = Array.isArray(goal?.athletesInvolved)
+      ? goal.athletesInvolved.map(participantName).join("|")
+      : "";
+    const key = String(goal?.id ?? goal?.uid ?? goal?.sequenceNumber ?? [
+      goal?.clock?.displayValue ?? goal?.clock,
+      goal?.team?.id,
+      goal?.type?.text,
+      athletes,
+      goal?.text,
+      index,
+    ].join("|"));
+
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function goalKey(eventId, goal, scorer, score) {
@@ -187,10 +238,7 @@ function goalKey(eventId, goal, scorer, score) {
 }
 
 function getGoals(summary, event) {
-  const rawGoals = Array.isArray(summary?.keyEvents)
-    ? summary.keyEvents.filter(item => item?.scoringPlay === true && item?.shootout !== true)
-    : [];
-
+  const rawGoals = scoringEntries(summary, event);
   const teams = getMatchTeams(event);
   let homeScore = 0;
   let awayScore = 0;
@@ -201,7 +249,7 @@ function getGoals(summary, event) {
     .map(({ goal }) => {
       const people = extractGoalPeople(goal);
       const ownGoal = goal?.ownGoal === true || normalize(goal?.type?.text).includes("own goal");
-      const penalty = goal?.penalty === true || normalize(goal?.type?.text).includes("penalty");
+      const penalty = goal?.penaltyKick === true || goal?.penalty === true || normalize(goal?.type?.text).includes("penalty");
       const eventHomeScore = asNumber(goal?.homeScore);
       const eventAwayScore = asNumber(goal?.awayScore);
 
@@ -215,32 +263,20 @@ function getGoals(summary, event) {
           else if (scoringTeamId === teams.away.id) scoringTeamId = teams.home.id;
         }
 
-        if (scoringTeamId && scoringTeamId === teams.home.id) homeScore += 1;
-        else if (scoringTeamId && scoringTeamId === teams.away.id) awayScore += 1;
-        else {
-          // If ESPN omits the team on a rare event, keep the last known score rather than inventing one.
-          const currentHome = teams.home.score;
-          const currentAway = teams.away.score;
-          if (rawGoals.length === 1 && currentHome !== null && currentAway !== null) {
-            homeScore = currentHome;
-            awayScore = currentAway;
-          }
-        }
+        if (scoringTeamId === teams.home.id) homeScore += 1;
+        else if (scoringTeamId === teams.away.id) awayScore += 1;
       }
 
       const minute = parseMinute(goal?.clock?.displayValue ?? goal?.clock);
       const score = `${homeScore}:${awayScore}`;
 
       return {
-        raw: goal,
         scorer: people.scorer,
         assist: people.assist,
         ownGoal,
         penalty,
         minute: minute.display,
         score,
-        homeScore,
-        awayScore,
         key: goalKey(String(event?.id || "event"), goal, people.scorer, score),
       };
     });
@@ -269,6 +305,11 @@ async function hydrateSeen(channel, botUserId) {
   }
 
   return seen;
+}
+
+function hasSeenEvent(state, eventId) {
+  const prefix = `${eventId}:`;
+  return [...state.seen].some(key => String(key).startsWith(prefix));
 }
 
 function addUniqueMapValue(map, key, value) {
@@ -348,6 +389,7 @@ async function buildDiscordManagerMap(guild) {
 function ownerTag(owner, discordManagerMap) {
   if (!owner?.managerName) return { text: "", userId: null };
   const userId = discordManagerMap.get(normalize(owner.managerName));
+
   if (userId) return { text: ` (<@${userId}>)`, userId };
   return { text: ` (**${escapeDiscordText(owner.managerName)}**)`, userId: null };
 }
@@ -361,6 +403,7 @@ function buildGoalPost(event, goal, kickbaseIndex, discordManagerMap) {
   const scorer = escapeDiscordText(goal.scorer);
   const assist = goal.assist ? escapeDiscordText(goal.assist) : null;
   const flags = [goal.penalty ? "Elfmeter" : null, goal.ownGoal ? "Eigentor" : null].filter(Boolean);
+  const testMode = GOAL_CHANNEL_ID === TEST_CHANNEL_ID;
 
   const description = [
     `## ⚽ **${goal.score} durch ${scorer}**${scorerTag.text}`,
@@ -373,18 +416,12 @@ function buildGoalPost(event, goal, kickbaseIndex, discordManagerMap) {
 
   return {
     embed: buildKbbEmbed({
-      title: "🚨 TOR IN DER BUNDESLIGA!",
+      title: testMode ? "🧪🚨 TOR IN DER BUNDESLIGA!" : "🚨 TOR IN DER BUNDESLIGA!",
       description,
-      footer: `187 KICKBASEBANDE • LIVE TEST • ${MARKER_PREFIX}${goal.key}`,
+      footer: `187 KICKBASEBANDE • ${testMode ? "LIVE TEST" : "LIVE"} • ${MARKER_PREFIX}${goal.key}`,
     }),
     mentionUserIds: [...new Set([scorerTag.userId, assistTag.userId].filter(Boolean))],
   };
-}
-
-async function fetchSummary(eventId) {
-  const url = new URL(ESPN_SUMMARY_URL);
-  url.searchParams.set("event", String(eventId));
-  return fetchJson(url.toString());
 }
 
 async function processGuild(guild) {
@@ -392,8 +429,11 @@ async function processGuild(guild) {
   runningGuilds.add(guild.id);
 
   try {
-    const channel = await guild.channels.fetch(TEST_CHANNEL_ID).catch(() => null);
-    if (!channel?.isTextBased?.() || !channel?.messages?.fetch) return;
+    const channel = await guild.channels.fetch(GOAL_CHANNEL_ID).catch(() => null);
+    if (!channel?.isTextBased?.() || !channel?.messages?.fetch) {
+      console.warn(`⚠️ Bundesliga goal-feed channel ${GOAL_CHANNEL_ID} unavailable in ${guild.id}`);
+      return;
+    }
 
     let state = guildStates.get(guild.id);
     if (!state) {
@@ -404,14 +444,38 @@ async function processGuild(guild) {
     if (!state.hydrated) {
       state.seen = await hydrateSeen(channel, guild.client.user?.id);
       state.hydrated = true;
-      console.log(`⚽ Goal-feed recovery ${guild.name}: ${state.seen.size} known goal marker(s)`);
+      console.log(`⚽ Bundesliga goal-feed recovery ${guild.name}: ${state.seen.size} known marker(s)`);
     }
 
-    const scoreboard = await fetchJson(ESPN_SCOREBOARD_URL);
-    const liveEvents = getLiveEvents(scoreboard);
-    if (!liveEvents.length) return;
+    const scoreboard = await fetchJson(scoreboardUrl());
+    const events = Array.isArray(scoreboard?.events) ? scoreboard.events : [];
+    if (!events.length) return;
 
-    console.log(`⚽ Bundesliga live feed: ${liveEvents.length} live match(es)`);
+    const pending = [];
+
+    for (const event of events) {
+      const eventId = String(event?.id || "").trim();
+      if (!eventId) continue;
+
+      const live = isLive(event);
+      const completedRecovery = isCompleted(event) && hasSeenEvent(state, eventId);
+      if (!live && !completedRecovery) continue;
+
+      const summary = await fetchJson(summaryUrl(eventId)).catch(error => {
+        console.warn(`⚠️ ESPN Bundesliga summary failed for ${eventId}: ${error?.message || error}`);
+        return null;
+      });
+      if (!summary) continue;
+
+      const goals = getGoals(summary, event);
+      state.initializedEvents.add(eventId);
+
+      for (const goal of goals) {
+        if (!state.seen.has(goal.key)) pending.push({ event, goal });
+      }
+    }
+
+    if (!pending.length) return;
 
     const [kickbaseLive, discordManagerMap] = await Promise.all([
       getKickbaseLiveOwnership(),
@@ -420,44 +484,26 @@ async function processGuild(guild) {
 
     const kickbaseIndex = buildKickbasePlayerIndex(kickbaseLive.ok ? kickbaseLive.players : []);
     if (!kickbaseLive.ok) {
-      console.warn(`⚠️ Goal-feed Kickbase ownership unavailable: ${kickbaseLive.error || kickbaseLive.code}`);
+      console.warn(`⚠️ Bundesliga goal-feed Kickbase ownership unavailable: ${kickbaseLive.error || kickbaseLive.code}`);
     }
 
-    for (const event of liveEvents) {
-      const eventId = String(event?.id || "").trim();
-      if (!eventId) continue;
+    for (const { event, goal } of pending) {
+      if (state.seen.has(goal.key)) continue;
 
-      const summary = await fetchSummary(eventId).catch(error => {
-        console.warn(`⚠️ ESPN summary failed for ${eventId}: ${error?.message || error}`);
+      const post = buildGoalPost(event, goal, kickbaseIndex, discordManagerMap);
+      const sent = await channel.send({
+        embeds: [post.embed],
+        allowedMentions: { users: post.mentionUserIds, parse: [] },
+      }).catch(error => {
+        console.error(`❌ Bundesliga goal-feed post failed for ${guild.id}:`, error?.message || error);
         return null;
       });
-      if (!summary) continue;
 
-      const goals = getGoals(summary, event);
-      const firstObservation = !state.initializedEvents.has(eventId);
-      state.initializedEvents.add(eventId);
+      if (!sent) continue;
+      state.seen.add(goal.key);
 
-      let candidates = goals.filter(goal => !state.seen.has(goal.key));
-      if (firstObservation && candidates.length > INITIAL_BACKFILL) {
-        const skipped = candidates.slice(0, candidates.length - INITIAL_BACKFILL);
-        for (const goal of skipped) state.seen.add(goal.key);
-        candidates = candidates.slice(-INITIAL_BACKFILL);
-      }
-
-      for (const goal of candidates) {
-        const post = buildGoalPost(event, goal, kickbaseIndex, discordManagerMap);
-        const sent = await channel.send({
-          embeds: [post.embed],
-          allowedMentions: { users: post.mentionUserIds, parse: [] },
-        }).catch(error => {
-          console.error(`❌ Goal-feed post failed for ${guild.id}:`, error?.message || error);
-          return null;
-        });
-
-        if (!sent) continue;
-        state.seen.add(goal.key);
-        console.log(`✅ Goal-feed posted: ${goal.score} ${goal.scorer} (${eventId})`);
-      }
+      const teams = getMatchTeams(event);
+      console.log(`✅ Bundesliga goal posted: ${teams.home.name} ${goal.score} ${teams.away.name} — ${goal.scorer}`);
     }
   } catch (error) {
     console.error(`❌ Bundesliga goal-feed poll failed for ${guild.id}:`, error?.message || error);
@@ -473,7 +519,7 @@ export function startBundesligaGoalFeedScheduler(client) {
     }
   };
 
-  setTimeout(() => run().catch(() => null), 20_000);
-  console.log(`⚽ Experimental Bundesliga goal feed active: channel=${TEST_CHANNEL_ID}, interval=${POLL_INTERVAL_MS}ms`);
+  setTimeout(() => run().catch(() => null), 15_000);
+  console.log(`⚽ Bundesliga live goal feed ready: channel=${GOAL_CHANNEL_ID}, interval=${POLL_INTERVAL_MS}ms, date=Europe/Berlin`);
   return setInterval(() => run().catch(() => null), POLL_INTERVAL_MS);
 }
