@@ -5,6 +5,7 @@ import { getKickbaseConnectionInfo } from "../utils/kickbaseInfo.js";
 
 const DEFAULT_TOP5_CHANNEL_ID = process.env.TOP5_CHANNEL_ID || "1522249357179617331";
 const DEFAULT_TEST_CHANNEL_ID = process.env.KBB_TEST_CHANNEL_ID || "1522249317656690929";
+const DEFAULT_TRANSFER_CHANNEL_ID = process.env.KBB_TRANSFER_CHANNEL_ID || "1522249401735839784";
 
 function hasManageServerPermission(interaction) {
   return !!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
@@ -123,6 +124,7 @@ export async function runKbbHelp(interaction) {
       "• `/kbb setup` — Channels setzen *(Admin)*",
       "",
       `**Top-5-Abgabe Channel:** <#${top5ChannelId}>`,
+      `**Transfermarkt Live-Feed:** <#${DEFAULT_TRANSFER_CHANNEL_ID}> — automatische Prüfung jede Minute`,
       `**Feature-Test Channel:** <#${DEFAULT_TEST_CHANNEL_ID}>`,
       "**Regulärer Rundenstart:** Freitag um **20:00 Uhr (Europe/Berlin)**.",
       "**Abgabefrist:** Dienstag um **22:00 Uhr (Europe/Berlin)**.",
