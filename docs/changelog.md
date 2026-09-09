@@ -1,5 +1,50 @@
 # KBB Kickbase Bot — Changelog
 
+## Version 0.4.6 — Kickbase Market Value Archive
+
+### New
+
+- Top-5 submissions can now resolve players through a read-only Kickbase v4 integration.
+- The bot searches the entered player name, resolves the Kickbase player ID and fetches the current market value at submission time.
+- Public Top-5 submission messages now include the stored market value.
+- `/kbb top5-status` and the completed-round summary now show each stored market value.
+- Added `/kbb top5-history` to access historic Top-5 submissions and their market values later.
+- `/kbb top5-history manager:@User` can filter the archive by manager.
+- `/kbb top5-history anzahl:50` can show up to 50 recent entries.
+
+### Stored Data
+
+Each new resolved submission stores:
+
+- Discord manager ID
+- submitted player name
+- resolved Kickbase player name
+- Kickbase player ID
+- market value at submission time
+- timestamp when the market value was fetched
+- competition ID
+- league ID when available
+- submission timestamp
+
+### Durable History
+
+- The market value is also written into the public bot submission message in the Top-5 channel.
+- Discord therefore remains a durable recovery/archive source even if Discloud replaces local JSON files during a deploy.
+- Recovery now parses market values from those historic bot messages.
+
+### Player Validation
+
+- Ambiguous player names are no longer silently assigned to a random player.
+- If multiple players are plausible, the bot returns possible matches privately and asks for a more exact name.
+- If no player can be found, the submission is not stored until the name is corrected.
+
+### API Availability
+
+- The integration is read-only. It does not buy, sell or modify players in Kickbase.
+- If the Kickbase API is temporarily unavailable or not configured, the Top-5 submission itself is still accepted so the deadline workflow is not blocked; its market value is stored as unavailable.
+- Authentication supports either `KICKBASE_TOKEN` or `KICKBASE_EMAIL` + `KICKBASE_PASSWORD` through Discloud environment variables.
+- Real Kickbase credentials/tokens must never be committed to GitHub.
+
 ## Version 0.4.5 — Top-5 Button Cleanup
 
 ### Improved
@@ -50,7 +95,7 @@
 - The bot now still publishes all known managers who did not submit on time.
 - Known late submissions continue to be shown with their exact submission time.
 - Missing roster slots are shown as a warning instead of blocking the entire deadline report.
-- Automatic Monday 22:00 deadline checks also continue to work with an incomplete roster.
+- Automatic deadline checks also continue to work with an incomplete roster.
 
 ### Improved Manager Handling
 
@@ -79,29 +124,27 @@
 
 - Automatic/manual round closures now post a visible **Neue Top-5-Runde gestartet** marker.
 - Recovery only rebuilds submissions after the most recent round boundary, preventing old submissions from leaking into a new round.
-- Fixed the next deadline calculation for rounds started on Monday at or after 22:00; those rounds now correctly use the following Monday.
 
 ## Version 0.4.0 — Automatic Top-5 Deadline Check
 
 ### New Features
 
-- Added an automatic Top-5 deadline check every **Monday at 22:00 Europe/Berlin**.
+- Added an automatic Top-5 deadline check every **Tuesday at 22:00 Europe/Berlin**.
 - The bot posts the managers who did not submit in time directly in the configured Top-5 channel.
 - Late submissions are detected by their saved submission timestamp. A player submitted after 22:00 is shown as **zu spät** with the submission time.
-- After the automatic Monday deadline post, the current Top-5 round is archived and a fresh round is started automatically.
+- After the automatic deadline post, the current Top-5 round is archived and a fresh round is started automatically.
 - Added `/kbb top5-missing` for admins to publish the deadline result manually at any time.
 - `/kbb top5-missing runde_abschliessen:true` can also close the current round and immediately start the next one.
-- Added a persistent KBB manager roster so deadline checks know exactly which 14 managers are expected.
+- Added a persistent KBB manager roster so deadline checks know which managers are expected.
 - Added `/kbb manager-add`, `/kbb manager-remove` and `/kbb manager-list`.
-- The automatic deadline check only runs successfully when the manager roster contains exactly **14 managers**.
-- `/kbb setup` can now also configure the Top-5 channel.
-- `/kbb help`, `/kbb league`, `/kbb rules` and `/kbb top5-status` were extended with the deadline/manager information.
+- `/kbb setup` can configure the Top-5 channel.
+- `/kbb help`, `/kbb league`, `/kbb rules` and `/kbb top5-status` include deadline/manager information.
 
 ### Deadline Rules
 
-- Deadline: **Monday, 22:00 Uhr**.
+- Deadline: **Tuesday, 22:00 Uhr**.
 - Missing submission: manager has no submission for the active round by the deadline.
-- Late submission: submission timestamp is after the round's Monday 22:00 deadline.
+- Late submission: submission timestamp is after Tuesday 22:00 for that round.
 - Automatic deadline output is deduplicated so it is posted only once per round/deadline.
 
 ## Version 0.3.2 — Public Nickname Change Notice
@@ -152,19 +195,14 @@
 ### New Features
 
 - Added `/kbb top5` for private Top-5 player submissions.
-- The command is restricted to the Top-5 submission channel `1522249357179617331`.
+- The command is restricted to the configured Top-5 submission channel.
 - Users enter the player name through a private Discord modal, so the channel stays clean.
-- After a successful submission, the bot posts one public line: `Manager: @user hat **Spielername** abgegeben.`
+- After a successful submission, the bot posts one public line with manager and player.
 - Each manager can only submit one player per active Top-5 round.
 - Added `/kbb top5-status` to show current submission progress.
 - Added `/kbb top5-reset` for admins / server managers to start a new Top-5 round.
 - When 14 managers have submitted, the bot posts an automatic summary.
 - Added persistent Top-5 storage in `src/data/top5Submissions.json`.
-
-### Notes
-
-- Kickbase market values are prepared as a future field but are not automatically fetched yet.
-- A Kickbase market-value integration needs either a reliable API, login/session handling, or another trusted player data source.
 
 ## Version 0.1.0 — Initial Bot Foundation
 
@@ -191,11 +229,3 @@
 - Starting capital: Team + 50 Mio
 - Entry fee: 20 €
 - Communication: Discord server
-
-### Next Planned Modules
-
-- Penalty catalog.
-- Manager list.
-- Matchday management.
-- Transfer / underpay checks.
-- Announcement automation.
