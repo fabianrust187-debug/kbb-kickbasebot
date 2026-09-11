@@ -165,8 +165,9 @@ function mergePlayers(squadPlayers, livePlayers) {
   return [...map.values()];
 }
 
-async function loadTeamcenter(leagueId, manager) {
+async function loadManagerSquad(leagueId, manager) {
   const paths = [
+    `/leagues/${leagueId}/managers/${manager.managerId}/squad`,
     `/leagues/${leagueId}/users/${manager.managerId}/teamcenter`,
     `/leagues/${leagueId}/users/${manager.managerId}/players`,
   ];
@@ -175,7 +176,10 @@ async function loadTeamcenter(leagueId, manager) {
     try {
       const data = await apiGet(path);
       const players = parsePlayers(data, manager);
-      if (players.length) return players;
+      if (players.length) {
+        console.log(`👥 Kickbase squad ${manager.managerName}: ${players.length} player(s) via ${path}`);
+        return players;
+      }
     } catch (error) {
       console.warn(`⚠️ Kickbase ownership fallback failed ${path}: ${error?.message || error}`);
     }
@@ -205,7 +209,7 @@ export async function getReliableKickbaseOwnership({ force = false } = {}) {
     for (const manager of live.managers) if (!byId.has(manager.managerId)) byId.set(manager.managerId, manager);
     managers = [...byId.values()];
 
-    const squadLists = await Promise.all(managers.map(manager => loadTeamcenter(leagueId, manager)));
+    const squadLists = await Promise.all(managers.map(manager => loadManagerSquad(leagueId, manager)));
     const squadPlayers = squadLists.flat();
     const players = mergePlayers(squadPlayers, live.players);
 
