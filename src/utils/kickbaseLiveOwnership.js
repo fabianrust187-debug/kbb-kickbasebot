@@ -159,8 +159,12 @@ function parsePlayer(player, manager) {
     playerName,
     normalizedName: normalize(playerName),
     teamId: String(player.tid ?? player.teamId ?? "").trim() || null,
+    livePoints: numberOrNull(player.t ?? player.points ?? player.livePoints),
     goals: numberOrNull(player.g ?? player.goals),
     assists: numberOrNull(player.a ?? player.assists),
+    redCards: numberOrNull(player.r ?? player.redCards),
+    yellowCards: numberOrNull(player.y ?? player.yellowCards),
+    yellowRedCards: numberOrNull(player.yr ?? player.yellowRedCards),
     managerId: manager.managerId,
     managerName: manager.managerName,
   };
