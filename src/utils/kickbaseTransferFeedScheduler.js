@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { buildKbbEmbed } from "./embeds.js";
 import { formatTransferPrice, getLatestLeagueTransfers } from "./kickbaseFeed.js";
 import { getManagers } from "./managerStore.js";
+import { applyManagerAliases, normalizeManagerKey, resolveManagerAlias } from "./managerAliases.js";
 
 const TRANSFER_CHANNEL_ID = process.env.KBB_TRANSFER_CHANNEL_ID || "1522249401735839784";
 const POLL_INTERVAL_MS = Math.max(30_000, Number(process.env.KBB_TRANSFER_FEED_INTERVAL_MS || 60_000));
@@ -16,15 +17,6 @@ function escapeDiscordText(value) {
   return String(value || "")
     .replace(/\\/g, "\\\\")
     .replace(/([*_~`>|])/g, "\\$1");
-}
-
-function normalizeManagerName(value) {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "")
-    .trim();
 }
 
 function transferKey(transfer) {
@@ -88,7 +80,7 @@ async function buildDiscordManagerMap(guild) {
 
   for (const entry of resolved.filter(Boolean)) {
     for (const name of entry.names) {
-      const key = normalizeManagerName(name);
+      const key = normalizeManagerKey(name);
       if (!key) continue;
 
       if (map.has(key) && map.get(key) !== entry.userId) {
@@ -99,12 +91,13 @@ async function buildDiscordManagerMap(guild) {
     }
   }
 
-  return map;
+  return applyManagerAliases(map);
 }
 
 function managerLabel(kickbaseName, discordManagerMap) {
   const safeName = escapeDiscordText(kickbaseName);
-  const userId = discordManagerMap.get(normalizeManagerName(kickbaseName));
+  const userId = discordManagerMap.get(normalizeManagerKey(kickbaseName))
+    || resolveManagerAlias(kickbaseName);
 
   return {
     text: userId ? `**${safeName}** (<@${userId}>)` : `**${safeName}**`,
@@ -224,8 +217,6 @@ export function startKickbaseTransferFeedScheduler(client) {
     }
   };
 
-  // Give the existing Top-5 recovery a moment to restore the manager roster first,
-  // so Discord mentions are available on the initial transfer backfill as well.
   setTimeout(() => run().catch(() => null), 15_000);
 
   console.log(`💸 Kickbase transfer feed active: channel=${TRANSFER_CHANNEL_ID}, interval=${POLL_INTERVAL_MS}ms`);
