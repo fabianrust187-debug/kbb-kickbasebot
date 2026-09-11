@@ -62,7 +62,7 @@ export async function runKickbaseInfo(interaction) {
       "## ✅ Liga gefunden",
       `**Liga:** ${info.league.name}`,
       `**Liga-ID:** \`${info.league.id}\``,
-      "**Marktwert-/Live-Anbindung:** ✅ bereit für Top-5 und Bundesliga-Torfeed",
+      "**Marktwert-/Live-Anbindung:** ✅ bereit für Top-5 und Bundesliga-Livefeed",
       "",
     );
 
@@ -127,9 +127,11 @@ export async function runKbbHelp(interaction) {
       "",
       `**Top-5-Abgabe Channel:** <#${top5ChannelId}>`,
       `**Transfermarkt Live-Feed:** <#${DEFAULT_TRANSFER_CHANNEL_ID}> — automatische Prüfung jede Minute`,
-      `**Bundesliga Tor-Livefeed:** <#${DEFAULT_GOAL_CHANNEL_ID}> — Livebetrieb, Prüfung ca. alle **30 Sekunden**`,
+      `**Bundesliga Livefeed:** <#${DEFAULT_GOAL_CHANNEL_ID}> — Prüfung ca. alle **30 Sekunden**`,
       `**Feature-Test Channel:** <#${DEFAULT_TEST_CHANNEL_ID}>`,
-      "Beim Bundesliga-Torfeed werden Torschütze und Vorlage mit dem aktuellen Kickbase-Besitzer abgeglichen und der zugehörige Discord-Manager markiert, sofern die Zuordnung eindeutig ist.",
+      "Der Bundesliga-Livefeed meldet Tore, Vorlagen, rote/gelb-rote Karten und ausdrücklich verletzungsbedingte Auswechslungen.",
+      "Torschützen, Vorlagengeber sowie betroffene Karten-/Verletzungsspieler werden mit dem aktuellen Kickbase-Besitzer abgeglichen und der zugehörige Discord-Manager wird markiert, sofern die Zuordnung eindeutig ist.",
+      "**Kartenscoring:** Rot **-75**, Gelb-Rot **-50** Kickbase-Punkte.",
       "**Regulärer Rundenstart:** Freitag um **20:00 Uhr (Europe/Berlin)**.",
       "**Abgabefrist:** Dienstag um **22:00 Uhr (Europe/Berlin)**.",
       "Nach der Dienstagsfrist bleibt der Abgabe-Button weg, bis die nächste Runde am Freitag startet.",
