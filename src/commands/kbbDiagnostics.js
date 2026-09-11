@@ -6,7 +6,7 @@ import { getKickbaseConnectionInfo } from "../utils/kickbaseInfo.js";
 const DEFAULT_TOP5_CHANNEL_ID = process.env.TOP5_CHANNEL_ID || "1522249357179617331";
 const DEFAULT_TEST_CHANNEL_ID = process.env.KBB_TEST_CHANNEL_ID || "1522249317656690929";
 const DEFAULT_TRANSFER_CHANNEL_ID = process.env.KBB_TRANSFER_CHANNEL_ID || "1522249401735839784";
-const DEFAULT_GOAL_CHANNEL_ID = process.env.KBB_GOAL_CHANNEL_ID || DEFAULT_TEST_CHANNEL_ID;
+const DEFAULT_GOAL_CHANNEL_ID = process.env.KBB_GOAL_CHANNEL_ID || "1522249187666952254";
 
 function hasManageServerPermission(interaction) {
   return !!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
@@ -102,7 +102,6 @@ export async function runKickbaseInfo(interaction) {
 
 export async function runKbbHelp(interaction) {
   const top5ChannelId = getTop5ChannelId(interaction.guildId);
-  const goalMode = DEFAULT_GOAL_CHANNEL_ID === DEFAULT_TEST_CHANNEL_ID ? "Testbetrieb" : "Livebetrieb";
 
   const embed = buildKbbEmbed({
     title: "📘 KBB Bot Help",
@@ -128,7 +127,7 @@ export async function runKbbHelp(interaction) {
       "",
       `**Top-5-Abgabe Channel:** <#${top5ChannelId}>`,
       `**Transfermarkt Live-Feed:** <#${DEFAULT_TRANSFER_CHANNEL_ID}> — automatische Prüfung jede Minute`,
-      `**Bundesliga Tor-Livefeed:** <#${DEFAULT_GOAL_CHANNEL_ID}> — ${goalMode}, Prüfung ca. alle **30 Sekunden**`,
+      `**Bundesliga Tor-Livefeed:** <#${DEFAULT_GOAL_CHANNEL_ID}> — Livebetrieb, Prüfung ca. alle **30 Sekunden**`,
       `**Feature-Test Channel:** <#${DEFAULT_TEST_CHANNEL_ID}>`,
       "Beim Bundesliga-Torfeed werden Torschütze und Vorlage mit dem aktuellen Kickbase-Besitzer abgeglichen und der zugehörige Discord-Manager markiert, sofern die Zuordnung eindeutig ist.",
       "**Regulärer Rundenstart:** Freitag um **20:00 Uhr (Europe/Berlin)**.",
