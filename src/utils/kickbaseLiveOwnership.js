@@ -1,9 +1,11 @@
 const API_BASE = "https://api.kickbase.com/v4";
 const DEFAULT_LEAGUE_NAME = process.env.KICKBASE_LEAGUE_NAME || "187 KICKBASEBANDE";
 const REQUEST_TIMEOUT_MS = Number(process.env.KICKBASE_API_TIMEOUT_MS || 10000);
+const OWNERSHIP_CACHE_MS = Math.max(30_000, Number(process.env.KBB_OWNERSHIP_CACHE_MS || 60_000));
 
 let cachedToken = String(process.env.KICKBASE_TOKEN || "").trim() || null;
 let cachedLeagueId = String(process.env.KICKBASE_LEAGUE_ID || "").trim() || null;
+let ownershipCache = { expiresAt: 0, value: null };
 
 function normalize(value) {
   return String(value || "")
@@ -140,18 +142,79 @@ function parseUsers(data) {
   if (Array.isArray(data?.u)) return data.u;
   if (Array.isArray(data?.users)) return data.users;
   if (Array.isArray(data?.it)) return data.it;
+  if (Array.isArray(data?.us)) return data.us;
   if (Array.isArray(data)) return data;
   return [];
 }
 
-function parsePlayer(player, manager) {
+function parseManager(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  const nested = entry.u && typeof entry.u === "object" ? entry.u : null;
+  const managerId = String(
+    entry.managerId
+    ?? entry.mi
+    ?? entry.id
+    ?? entry.i
+    ?? nested?.i
+    ?? (typeof entry.u === "string" ? entry.u : ""),
+  ).trim() || null;
+  const managerName = String(
+    entry.managerName
+    ?? entry.unm
+    ?? entry.name
+    ?? entry.n
+    ?? nested?.unm
+    ?? nested?.n
+    ?? "",
+  ).trim() || "Unbekannter Manager";
+  if (!managerId) return null;
+  return { managerId, managerName };
+}
+
+function parseManagerDirectory(data) {
+  const candidates = [
+    ...(Array.isArray(data) ? data : []),
+    ...(Array.isArray(data?.it) ? data.it : []),
+    ...(Array.isArray(data?.u) ? data.u : []),
+    ...(Array.isArray(data?.us) ? data.us : []),
+    ...(Array.isArray(data?.managers) ? data.managers : []),
+    ...(Array.isArray(data?.m) ? data.m : []),
+    ...(Array.isArray(data?.settings?.managers) ? data.settings.managers : []),
+  ];
+
+  const managers = new Map();
+  for (const entry of candidates) {
+    const parsed = parseManager(entry);
+    if (!parsed) continue;
+    const existing = managers.get(parsed.managerId);
+    if (!existing || existing.managerName === "Unbekannter Manager") {
+      managers.set(parsed.managerId, parsed);
+    }
+  }
+  return [...managers.values()];
+}
+
+function playerDisplayName(player) {
+  const firstName = String(player?.fn ?? player?.firstName ?? "").trim();
+  const lastName = String(player?.ln ?? player?.lastName ?? "").trim();
+  const shortName = String(player?.n ?? "").trim();
+  const explicitName = String(player?.name ?? player?.displayName ?? player?.fullName ?? "").trim();
+
+  if (firstName && lastName) return `${firstName} ${lastName}`.trim();
+  if (explicitName) return explicitName;
+  if (firstName && shortName) {
+    const nf = normalize(firstName);
+    const nn = normalize(shortName);
+    return nn.startsWith(nf) ? shortName : `${firstName} ${shortName}`.trim();
+  }
+  return shortName || firstName;
+}
+
+function parsePlayer(player, manager, { live = false } = {}) {
   if (!player || typeof player !== "object") return null;
 
   const playerId = String(player.id ?? player.i ?? player.pi ?? "").trim() || null;
-  const firstName = String(player.fn ?? player.firstName ?? "").trim();
-  const lastName = String(player.n ?? player.ln ?? player.lastName ?? "").trim();
-  const explicitName = String(player.name ?? "").trim();
-  const playerName = [firstName, lastName].filter(Boolean).join(" ").trim() || explicitName || playerId;
+  const playerName = playerDisplayName(player) || playerId;
   if (!playerName) return null;
 
   return {
@@ -167,7 +230,106 @@ function parsePlayer(player, manager) {
     yellowRedCards: numberOrNull(player.yr ?? player.yellowRedCards),
     managerId: manager.managerId,
     managerName: manager.managerName,
+    live,
   };
+}
+
+function parsePlayerList(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.pl)) return data.pl;
+  if (Array.isArray(data?.players)) return data.players;
+  if (Array.isArray(data?.it)) return data.it;
+  if (Array.isArray(data?.p)) return data.p;
+  if (Array.isArray(data?.squad)) return data.squad;
+  if (Array.isArray(data?.s?.pl)) return data.s.pl;
+  if (Array.isArray(data?.s?.players)) return data.s.players;
+  return [];
+}
+
+function parseLive(data) {
+  const managers = [];
+  const players = [];
+
+  for (const user of parseUsers(data)) {
+    const manager = parseManager(user) || {
+      managerId: String(user?.u?.i ?? user?.i ?? user?.id ?? "").trim() || null,
+      managerName: String(user?.u?.n ?? user?.n ?? user?.name ?? user?.unm ?? "").trim() || "Unbekannter Manager",
+    };
+    if (!manager.managerId) continue;
+    managers.push(manager);
+
+    for (const player of parsePlayerList(user)) {
+      const parsed = parsePlayer(player, manager, { live: true });
+      if (parsed) players.push(parsed);
+    }
+  }
+
+  return { managers, players };
+}
+
+function mergeManagers(...lists) {
+  const map = new Map();
+  for (const list of lists) {
+    for (const manager of list || []) {
+      if (!manager?.managerId) continue;
+      const existing = map.get(manager.managerId);
+      if (!existing || existing.managerName === "Unbekannter Manager") map.set(manager.managerId, manager);
+    }
+  }
+  return [...map.values()];
+}
+
+function playerMergeKey(player) {
+  return player?.playerId ? `id:${player.playerId}` : `name:${normalize(player?.playerName)}`;
+}
+
+function mergePlayers(squadPlayers, livePlayers) {
+  const map = new Map();
+  for (const player of squadPlayers || []) {
+    const key = playerMergeKey(player);
+    if (key) map.set(key, player);
+  }
+  for (const player of livePlayers || []) {
+    const key = playerMergeKey(player);
+    if (!key) continue;
+    const existing = map.get(key) || {};
+    map.set(key, { ...existing, ...player, live: true });
+  }
+  return [...map.values()];
+}
+
+async function loadManagerDirectory(leagueId, liveManagers) {
+  const discovered = [liveManagers];
+
+  for (const path of [
+    `/leagues/${leagueId}/settings/managers`,
+    `/leagues/${leagueId}/ranking`,
+  ]) {
+    try {
+      const data = await apiGet(path);
+      discovered.push(parseManagerDirectory(data));
+    } catch (error) {
+      console.warn(`⚠️ Kickbase manager directory fallback failed for ${path}: ${error?.message || error}`);
+    }
+  }
+
+  return mergeManagers(...discovered);
+}
+
+async function loadSquadPlayers(leagueId, managers) {
+  const results = await Promise.all(managers.map(async manager => {
+    try {
+      const data = await apiGet(`/leagues/${leagueId}/managers/${manager.managerId}/squad`);
+      return parsePlayerList(data)
+        .map(player => parsePlayer(player, manager, { live: false }))
+        .filter(Boolean);
+    } catch (error) {
+      console.warn(`⚠️ Kickbase squad lookup failed for ${manager.managerName} (${manager.managerId}): ${error?.message || error}`);
+      return [];
+    }
+  }));
+
+  return results.flat();
 }
 
 export async function getKickbaseLiveOwnership() {
@@ -182,34 +344,14 @@ export async function getKickbaseLiveOwnership() {
     }
 
     const data = await apiGet(`/leagues/${leagueId}/live`);
-    const managers = [];
-    const players = [];
-
-    for (const user of parseUsers(data)) {
-      const manager = {
-        managerId: String(user?.id ?? user?.i ?? user?.u?.i ?? "").trim() || null,
-        managerName: String(user?.n ?? user?.name ?? user?.unm ?? user?.u?.n ?? "").trim() || "Unbekannter Manager",
-      };
-      managers.push(manager);
-
-      const userPlayers = Array.isArray(user?.pl)
-        ? user.pl
-        : Array.isArray(user?.players)
-          ? user.players
-          : [];
-
-      for (const player of userPlayers) {
-        const parsed = parsePlayer(player, manager);
-        if (parsed) players.push(parsed);
-      }
-    }
+    const live = parseLive(data);
 
     return {
       ok: true,
       leagueId,
       leagueName: DEFAULT_LEAGUE_NAME,
-      managers,
-      players,
+      managers: live.managers,
+      players: live.players,
       fetchedAt: new Date().toISOString(),
     };
   } catch (error) {
@@ -217,6 +359,54 @@ export async function getKickbaseLiveOwnership() {
       ok: false,
       code: error?.code || "API_ERROR",
       error: error?.message || "Kickbase-Live-Daten konnten nicht geladen werden.",
+    };
+  }
+}
+
+export async function getKickbaseOwnershipSnapshot({ force = false } = {}) {
+  if (!force && ownershipCache.value && ownershipCache.expiresAt > Date.now()) {
+    return ownershipCache.value;
+  }
+
+  try {
+    const leagueId = await resolveLeagueId();
+    if (!leagueId) {
+      return {
+        ok: false,
+        code: "LEAGUE_NOT_FOUND",
+        error: `Kickbase-Liga \"${DEFAULT_LEAGUE_NAME}\" konnte nicht gefunden werden.`,
+      };
+    }
+
+    let live = { managers: [], players: [] };
+    try {
+      live = parseLive(await apiGet(`/leagues/${leagueId}/live`));
+    } catch (error) {
+      console.warn(`⚠️ Kickbase live ownership unavailable, continuing with squads: ${error?.message || error}`);
+    }
+
+    const managers = await loadManagerDirectory(leagueId, live.managers);
+    const squadPlayers = await loadSquadPlayers(leagueId, managers);
+    const players = mergePlayers(squadPlayers, live.players);
+
+    const value = {
+      ok: true,
+      leagueId,
+      leagueName: DEFAULT_LEAGUE_NAME,
+      managers,
+      players,
+      livePlayerCount: live.players.length,
+      squadPlayerCount: squadPlayers.length,
+      fetchedAt: new Date().toISOString(),
+    };
+
+    ownershipCache = { value, expiresAt: Date.now() + OWNERSHIP_CACHE_MS };
+    return value;
+  } catch (error) {
+    return {
+      ok: false,
+      code: error?.code || "API_ERROR",
+      error: error?.message || "Kickbase-Besitzerdaten konnten nicht geladen werden.",
     };
   }
 }
