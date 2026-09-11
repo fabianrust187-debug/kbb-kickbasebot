@@ -40,6 +40,15 @@ function num(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function cleanEventPlayerName(value) {
+  return String(value || "")
+    .replace(/\s*\([^)]*\)\s*$/, "")
+    .replace(/\s+with\s+(?:an?\s+)?(?:headed\s+)?(?:pass|cross|header|shot).*$/i, "")
+    .replace(/\s+(?:after|following)\s+(?:an?\s+).+$/i, "")
+    .replace(/\s+from\s+(?:an?\s+)?(?:headed\s+)?(?:pass|cross).*$/i, "")
+    .trim();
+}
+
 function berlinDate() {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Europe/Berlin", year: "numeric", month: "2-digit", day: "2-digit",
@@ -122,10 +131,10 @@ function participants(item) {
 }
 
 function participantName(participant) {
-  return String(
+  return cleanEventPlayerName(
     participant?.athlete?.displayName ?? participant?.athlete?.fullName ?? participant?.athlete?.shortName
     ?? participant?.displayName ?? participant?.fullName ?? participant?.shortName ?? participant?.name ?? "",
-  ).trim();
+  );
 }
 
 function participantRole(participant) {
@@ -173,7 +182,7 @@ function stableKey(eventId, kind, identity) {
 function parseAssist(raw) {
   for (const pattern of [/assisted\s+by\s+([^.;]+)/i, /assist(?:ed)?\s*:\s*([^.;]+)/i, /vorlage\s*(?:von|:)\s*([^.;]+)/i]) {
     const match = String(raw || "").match(pattern);
-    if (match?.[1]) return match[1].replace(/\s*\([^)]*\)\s*$/, "").trim();
+    if (match?.[1]) return cleanEventPlayerName(match[1]);
   }
   return null;
 }
@@ -190,9 +199,9 @@ function goalPeople(item) {
   let scorerName = participantName(scorer);
   if (!scorerName) {
     const match = raw.match(/^\s*([^,.]+?)\s+Goal/i);
-    scorerName = match?.[1]?.trim() || "Unbekannter Torschütze";
+    scorerName = cleanEventPlayerName(match?.[1] || "") || "Unbekannter Torschütze";
   }
-  return { scorer: scorerName, assist: participantName(assist) || parseAssist(raw) };
+  return { scorer: cleanEventPlayerName(scorerName), assist: participantName(assist) || parseAssist(raw) };
 }
 
 function goalActions(summary, event) {
@@ -284,7 +293,7 @@ function cardPlayer(item) {
   const raw = text(item);
   const match = raw.match(/^([^,.]+?)\s+\([^)]+\)\s+is shown the (?:red|second yellow) card/i)
     || raw.match(/([^.;]+?)\s+is shown the (?:red|second yellow) card/i);
-  return match?.[1]?.trim() || null;
+  return cleanEventPlayerName(match?.[1] || "") || null;
 }
 
 function cardActions(summary, event) {
@@ -324,7 +333,7 @@ function injuredPlayer(item) {
   const raw = text(item);
   for (const pattern of [/replaces\s+(.+?)\s+(?:because of|due to|following)\s+(?:an?\s+)?injury/i, /(.+?)\s+(?:is|was)\s+(?:unable to continue|forced off)/i]) {
     const match = raw.match(pattern);
-    if (match?.[1]) return match[1].replace(/\s*\([^)]*\)\s*$/, "").trim();
+    if (match?.[1]) return cleanEventPlayerName(match[1]);
   }
   return null;
 }
@@ -391,7 +400,8 @@ function buildPlayerIndex(players) {
 }
 
 function owner(playerName, index) {
-  const key = normalize(playerName);
+  const cleaned = cleanEventPlayerName(playerName);
+  const key = normalize(cleaned);
   if (!key) return null;
   const exact = index.exact.get(key);
   if (exact) return exact;
@@ -440,7 +450,7 @@ function postFor(event, action, playerIndex, managerMap) {
         title: "🚨 TOR IN DER BUNDESLIGA!",
         description: [
           `## ⚽ **${action.score} durch ${escapeDiscord(action.scorer)}**${tag.text}`,
-          action.assist ? `🎯 Vorlage: **${escapeDiscord(action.assist)}**${assistTag.text}` : null,
+          action.assist ? `🎯 Vorlage: **${escapeDiscord(cleanEventPlayerName(action.assist))}**${assistTag.text}` : null,
           flags.length ? `ℹ️ ${flags.join(" • ")}` : null,
           "",
           `**${escapeDiscord(match.home.name)} ${action.score} ${escapeDiscord(match.away.name)}**`,
@@ -526,7 +536,6 @@ async function processGuild(guild) {
       const firstObservation = !state.initializedEvents.has(eventId);
       state.initializedEvents.add(eventId);
 
-      // On every bot start/redeploy, current match events become the baseline. Never backfill old events.
       if (firstObservation) {
         for (const action of current) state.seen.add(action.key);
         console.log(`🛡️ Bundesliga V3 baseline ${eventId}: ${current.length} existing event(s)`);
@@ -546,7 +555,7 @@ async function processGuild(guild) {
             continue;
           }
           pending.event = event;
-          pending.action = action; // newest poll contains the richest scorer/assist/score data
+          pending.action = action;
           const settled = Date.now() - pending.firstSeenAt >= GOAL_SETTLE_MS || completed(event);
           if (settled) ready.push({ event: pending.event, action: pending.action });
           continue;
@@ -573,7 +582,8 @@ async function processGuild(guild) {
       state.seen.add(action.key);
       state.pendingGoals.delete(action.key);
       const resolved = owner(action.playerName, index);
-      console.log(`✅ Bundesliga V3 ${action.kind}: ${action.playerName} owner=${resolved?.managerName || "none"}`);
+      const assistResolved = action.kind === "goal" && action.assist ? owner(action.assist, index) : null;
+      console.log(`✅ Bundesliga V3 ${action.kind}: ${action.playerName} owner=${resolved?.managerName || "none"}${assistResolved ? ` assistOwner=${assistResolved.managerName}` : ""}`);
     }
   } catch (error) {
     console.error(`❌ Bundesliga V3 poll failed for ${guild.id}:`, error?.message || error);
