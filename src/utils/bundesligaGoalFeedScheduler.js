@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { buildKbbEmbed } from "./embeds.js";
 import { getManagers } from "./managerStore.js";
 import { getKickbaseLiveOwnership } from "./kickbaseLiveOwnership.js";
+import { applyManagerAliases, normalizeManagerKey, resolveManagerAlias } from "./managerAliases.js";
 
 const ESPN_LEAGUE = "ger.1";
 const ESPN_SCOREBOARD_BASE = `https://site.api.espn.com/apis/site/v2/sports/soccer/${ESPN_LEAGUE}/scoreboard`;
@@ -49,7 +50,6 @@ function berlinDateKey(date = new Date()) {
     month: "2-digit",
     day: "2-digit",
   }).formatToParts(date);
-
   const map = Object.fromEntries(parts.map(part => [part.type, part.value]));
   return `${map.year}${map.month}${map.day}`;
 }
@@ -69,13 +69,11 @@ function summaryUrl(eventId) {
 async function fetchJson(url) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
   try {
     const response = await fetch(url, {
       signal: controller.signal,
       headers: { Accept: "application/json" },
     });
-
     if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
     return await response.json();
   } finally {
@@ -88,8 +86,9 @@ function getCompetition(event) {
 }
 
 function getMatchTeams(event) {
-  const competition = getCompetition(event);
-  const competitors = Array.isArray(competition?.competitors) ? competition.competitors : [];
+  const competitors = Array.isArray(getCompetition(event)?.competitors)
+    ? getCompetition(event).competitors
+    : [];
   const home = competitors.find(item => item?.homeAway === "home") || competitors[0] || null;
   const away = competitors.find(item => item?.homeAway === "away") || competitors[1] || null;
 
@@ -148,6 +147,88 @@ function getParticipants(item) {
   return [];
 }
 
+function parseMinute(value) {
+  const text = String(value || "");
+  const match = text.match(/(\d+)(?:\D+\+\D*(\d+))?/);
+  if (!match) return { minute: 999, added: 0, display: "?", valid: false };
+  const minute = Number(match[1]);
+  const added = Number(match[2] || 0);
+  return {
+    minute,
+    added,
+    display: added ? `${minute}+${added}` : String(minute),
+    valid: true,
+  };
+}
+
+function actionSortValueFromMinute(minute, period = 0, index = 0) {
+  return Number(period || 0) * 100000 + minute.minute * 100 + minute.added + index / 1000;
+}
+
+function collectMatchEntries(summary, event) {
+  const sources = [
+    ["keyEvents", summary?.keyEvents],
+    ["header.details", summary?.header?.competitions?.[0]?.details],
+    ["details", summary?.details],
+    ["competition.details", getCompetition(event)?.details],
+    ["commentary", summary?.commentary],
+  ];
+
+  const entries = [];
+  let index = 0;
+  for (const [source, items] of sources) {
+    if (!Array.isArray(items)) continue;
+    for (const item of items) {
+      if (!item || typeof item !== "object") continue;
+      entries.push({ item, source, index: index++ });
+    }
+  }
+  return entries;
+}
+
+function sourcePriority(source) {
+  switch (source) {
+    case "keyEvents": return 5;
+    case "header.details": return 4;
+    case "details": return 3;
+    case "competition.details": return 2;
+    case "commentary": return 1;
+    default: return 0;
+  }
+}
+
+function entryQuality(entry) {
+  const item = entry.item;
+  const minute = parseMinute(item?.clock?.displayValue ?? item?.clock);
+  let score = sourcePriority(entry.source) * 10;
+  if (String(item?.id ?? item?.uid ?? item?.sequenceNumber ?? "").trim()) score += 3;
+  if (getParticipants(item).length) score += 4;
+  if (minute.valid) score += 3;
+  if (String(item?.team?.id ?? "").trim()) score += 2;
+  if (asNumber(item?.homeScore) !== null && asNumber(item?.awayScore) !== null) score += 8;
+  if (eventText(item)) score += 1;
+  return score;
+}
+
+function actionKey(eventId, kind, item, playerName, extra = "") {
+  const explicit = String(item?.id ?? item?.uid ?? item?.sequenceNumber ?? "").trim();
+  if (explicit) return `${eventId}:${kind}:${explicit}`;
+
+  const raw = [
+    eventId,
+    kind,
+    item?.period?.number ?? item?.period,
+    item?.clock?.displayValue ?? item?.clock,
+    item?.team?.id,
+    playerName,
+    extra,
+    item?.text,
+    item?.shortText,
+  ].join("|");
+
+  return `${eventId}:${kind}:${crypto.createHash("sha1").update(raw).digest("hex").slice(0, 18)}`;
+}
+
 function parseAssistFromText(text) {
   const value = String(text || "");
   for (const pattern of [
@@ -175,146 +256,115 @@ function parseScorerFromText(text) {
 
 function extractGoalPeople(goal) {
   const participants = getParticipants(goal);
-
   let scorerParticipant = participants.find(item => {
     const role = participantRole(item);
     return (role.includes("scor") || role.includes("goal")) && !role.includes("assist");
   });
-
   if (!scorerParticipant) {
     scorerParticipant = participants.find(item => Number(item?.order) === 1) || participants[0] || null;
   }
-
   const assistParticipant = participants.find(item => participantRole(item).includes("assist")) || null;
   const text = eventText(goal);
-
   return {
     scorer: participantName(scorerParticipant) || parseScorerFromText(text) || "Unbekannter Torschütze",
     assist: participantName(assistParticipant) || parseAssistFromText(text),
   };
 }
 
-function parseMinute(value) {
-  const text = String(value || "");
-  const match = text.match(/(\d+)(?:\D+\+\D*(\d+))?/);
-  if (!match) return { minute: 999, added: 0, display: text || "?" };
-  const minute = Number(match[1]);
-  const added = Number(match[2] || 0);
-  return { minute, added, display: added ? `${minute}+${added}` : String(minute) };
+function buildGoalCandidate(entry, event) {
+  const goal = entry.item;
+  if (goal?.scoringPlay !== true || goal?.shootout === true) return null;
+
+  const people = extractGoalPeople(goal);
+  const minute = parseMinute(goal?.clock?.displayValue ?? goal?.clock);
+  const teamId = String(goal?.team?.id ?? "").trim() || null;
+  const homeScore = asNumber(goal?.homeScore);
+  const awayScore = asNumber(goal?.awayScore);
+  const ownGoal = goal?.ownGoal === true || normalize(goal?.type?.text).includes("own goal");
+  const penalty = goal?.penaltyKick === true || goal?.penalty === true || normalize(goal?.type?.text).includes("penalty");
+  const playerKey = normalize(people.scorer);
+  const teamKey = teamId || "?";
+  const minuteKey = minute.valid ? minute.display : "?";
+  const scoreKey = homeScore !== null && awayScore !== null ? `${homeScore}:${awayScore}` : "?";
+
+  let semanticKey;
+  if (minute.valid && playerKey && playerKey !== "unbekannter torschutze") {
+    semanticKey = `goal|m:${minuteKey}|p:${playerKey}|t:${teamKey}`;
+  } else if (homeScore !== null && awayScore !== null) {
+    semanticKey = `goal|s:${scoreKey}|t:${teamKey}`;
+  } else {
+    semanticKey = `goal|m:${minuteKey}|t:${teamKey}|txt:${normalize(eventText(goal))}`;
+  }
+
+  return {
+    entry,
+    raw: goal,
+    people,
+    minute,
+    teamId,
+    homeScore,
+    awayScore,
+    ownGoal,
+    penalty,
+    semanticKey,
+    quality: entryQuality(entry),
+    period: asNumber(goal?.period?.number ?? goal?.period) || 0,
+    eventId: String(event?.id || "event"),
+  };
 }
 
-function actionSortValue(item, index) {
-  const period = asNumber(item?.period?.number ?? item?.period) || 0;
-  const clock = parseMinute(item?.clock?.displayValue ?? item?.clock);
-  return period * 100000 + clock.minute * 100 + clock.added + index / 1000;
-}
+function uniqueGoals(summary, event) {
+  const groups = new Map();
 
-function allMatchEntries(summary, event) {
-  const candidates = [
-    ...(Array.isArray(summary?.keyEvents) ? summary.keyEvents : []),
-    ...(Array.isArray(summary?.commentary) ? summary.commentary : []),
-    ...(Array.isArray(summary?.header?.competitions?.[0]?.details) ? summary.header.competitions[0].details : []),
-    ...(Array.isArray(summary?.details) ? summary.details : []),
-    ...(Array.isArray(getCompetition(event)?.details) ? getCompetition(event).details : []),
-  ];
+  for (const entry of collectMatchEntries(summary, event)) {
+    const candidate = buildGoalCandidate(entry, event);
+    if (!candidate) continue;
+    const existing = groups.get(candidate.semanticKey);
+    if (!existing || candidate.quality > existing.quality) groups.set(candidate.semanticKey, candidate);
+  }
 
-  const seen = new Set();
-
-  return candidates.filter((item, index) => {
-    if (!item || typeof item !== "object") return false;
-
-    const participants = getParticipants(item).map(participantName).filter(Boolean).join("|");
-    const explicit = String(item?.id ?? item?.uid ?? item?.sequenceNumber ?? "").trim();
-    const fallback = [
-      item?.clock?.displayValue ?? item?.clock,
-      item?.team?.id,
-      item?.type?.text,
-      participants,
-      item?.text,
-      item?.shortText,
-      index,
-    ].join("|");
-
-    const key = explicit || fallback;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
+  const candidates = [...groups.values()].sort((a, b) => {
+    return actionSortValueFromMinute(a.minute, a.period, a.entry.index)
+      - actionSortValueFromMinute(b.minute, b.period, b.entry.index);
   });
-}
-
-function actionKey(eventId, kind, item, playerName, extra = "") {
-  const explicit = String(item?.id ?? item?.uid ?? item?.sequenceNumber ?? "").trim();
-  if (explicit) return `${eventId}:${kind}:${explicit}`;
-
-  const raw = [
-    eventId,
-    kind,
-    item?.period?.number ?? item?.period,
-    item?.clock?.displayValue ?? item?.clock,
-    item?.team?.id,
-    playerName,
-    extra,
-    item?.text,
-    item?.shortText,
-  ].join("|");
-
-  return `${eventId}:${kind}:${crypto.createHash("sha1").update(raw).digest("hex").slice(0, 18)}`;
-}
-
-function getGoals(summary, event) {
-  const rawGoals = allMatchEntries(summary, event)
-    .filter(item => item?.scoringPlay === true && item?.shootout !== true);
 
   const teams = getMatchTeams(event);
   let homeScore = 0;
   let awayScore = 0;
 
-  return rawGoals
-    .map((goal, index) => ({ goal, index, sortValue: actionSortValue(goal, index) }))
-    .sort((a, b) => a.sortValue - b.sortValue)
-    .map(({ goal, index }) => {
-      const people = extractGoalPeople(goal);
-      const ownGoal = goal?.ownGoal === true || normalize(goal?.type?.text).includes("own goal");
-      const penalty = goal?.penaltyKick === true || goal?.penalty === true || normalize(goal?.type?.text).includes("penalty");
-      const eventHomeScore = asNumber(goal?.homeScore);
-      const eventAwayScore = asNumber(goal?.awayScore);
-
-      if (eventHomeScore !== null && eventAwayScore !== null) {
-        homeScore = eventHomeScore;
-        awayScore = eventAwayScore;
-      } else {
-        let scoringTeamId = String(goal?.team?.id ?? "").trim();
-        if (ownGoal && scoringTeamId) {
-          if (scoringTeamId === teams.home.id) scoringTeamId = teams.away.id;
-          else if (scoringTeamId === teams.away.id) scoringTeamId = teams.home.id;
-        }
-
-        if (scoringTeamId === teams.home.id) homeScore += 1;
-        else if (scoringTeamId === teams.away.id) awayScore += 1;
+  return candidates.map(candidate => {
+    if (candidate.homeScore !== null && candidate.awayScore !== null) {
+      homeScore = candidate.homeScore;
+      awayScore = candidate.awayScore;
+    } else {
+      let scoringTeamId = candidate.teamId;
+      if (candidate.ownGoal && scoringTeamId) {
+        if (scoringTeamId === teams.home.id) scoringTeamId = teams.away.id;
+        else if (scoringTeamId === teams.away.id) scoringTeamId = teams.home.id;
       }
+      if (scoringTeamId && scoringTeamId === teams.home.id) homeScore += 1;
+      else if (scoringTeamId && scoringTeamId === teams.away.id) awayScore += 1;
+    }
 
-      const minute = parseMinute(goal?.clock?.displayValue ?? goal?.clock);
-      const score = `${homeScore}:${awayScore}`;
-
-      return {
-        kind: "goal",
-        raw: goal,
-        playerName: people.scorer,
-        scorer: people.scorer,
-        assist: people.assist,
-        ownGoal,
-        penalty,
-        minute: minute.display,
-        score,
-        sortValue: actionSortValue(goal, index),
-        key: actionKey(String(event?.id || "event"), "goal", goal, people.scorer, score),
-      };
-    });
+    const score = `${homeScore}:${awayScore}`;
+    return {
+      kind: "goal",
+      raw: candidate.raw,
+      playerName: candidate.people.scorer,
+      scorer: candidate.people.scorer,
+      assist: candidate.people.assist,
+      ownGoal: candidate.ownGoal,
+      penalty: candidate.penalty,
+      minute: candidate.minute.display,
+      score,
+      sortValue: actionSortValueFromMinute(candidate.minute, candidate.period, candidate.entry.index),
+      key: actionKey(candidate.eventId, "goal", candidate.raw, candidate.people.scorer, score),
+    };
+  });
 }
 
 function parseCardPlayerFromText(text) {
   const value = String(text || "");
-
   for (const pattern of [
     /^([^,.]+?)\s+\([^)]+\)\s+is shown the red card/i,
     /^([^,.]+?)\s+\([^)]+\)\s+is shown the second yellow card/i,
@@ -326,29 +376,24 @@ function parseCardPlayerFromText(text) {
     const match = value.match(pattern);
     if (match?.[1]) return match[1].trim();
   }
-
   return null;
 }
 
 function detectCardKind(item) {
   const text = normalize(eventText(item));
   const type = normalize(item?.type?.text ?? item?.type?.displayName ?? item?.type?.name ?? "");
-
   const yellowRed = item?.yellowRedCard === true
     || item?.secondYellow === true
     || text.includes("second yellow")
     || text.includes("yellow red")
-    || text.includes("yellow-red")
     || text.includes("2nd yellow")
     || type.includes("second yellow")
     || type.includes("yellow red");
-
   if (yellowRed) return "yellow-red";
 
   const directRed = item?.redCard === true
     || text.includes("red card")
     || type.includes("red card");
-
   return directRed ? "red" : null;
 }
 
@@ -358,36 +403,53 @@ function extractCardPlayer(item) {
     const role = participantRole(participant);
     return role.includes("player") || role.includes("card") || role.includes("recipient");
   });
-
   return participantName(preferred)
     || participantName(participants[0])
     || participantName(item?.athlete)
     || parseCardPlayerFromText(eventText(item));
 }
 
-function getCards(summary, event) {
+function uniqueCards(summary, event) {
   const eventId = String(event?.id || "event");
+  const groups = new Map();
 
-  return allMatchEntries(summary, event)
-    .map((item, index) => ({ item, index, cardKind: detectCardKind(item) }))
-    .filter(entry => entry.cardKind)
-    .map(({ item, index, cardKind }) => {
-      const playerName = extractCardPlayer(item);
-      if (!playerName) return null;
+  for (const entry of collectMatchEntries(summary, event)) {
+    const cardKind = detectCardKind(entry.item);
+    if (!cardKind) continue;
+    const playerName = extractCardPlayer(entry.item);
+    if (!playerName) continue;
 
-      const minute = parseMinute(item?.clock?.displayValue ?? item?.clock);
-      return {
-        kind: "card",
-        cardKind,
-        raw: item,
-        playerName,
-        minute: minute.display,
-        sortValue: actionSortValue(item, index),
-        pointsPenalty: cardKind === "yellow-red" ? YELLOW_RED_POINTS : RED_CARD_POINTS,
-        key: actionKey(eventId, `card-${cardKind}`, item, playerName),
-      };
-    })
-    .filter(Boolean);
+    const minute = parseMinute(entry.item?.clock?.displayValue ?? entry.item?.clock);
+    const playerKey = normalize(playerName);
+    const groupKey = playerKey ? `card|${playerKey}` : `card|${normalize(eventText(entry.item))}`;
+    const candidate = {
+      entry,
+      raw: entry.item,
+      playerName,
+      cardKind,
+      minute,
+      quality: entryQuality(entry) + (cardKind === "yellow-red" ? 2 : 0),
+      period: asNumber(entry.item?.period?.number ?? entry.item?.period) || 0,
+    };
+
+    const existing = groups.get(groupKey);
+    if (!existing || candidate.quality > existing.quality) {
+      groups.set(groupKey, candidate);
+    } else if (candidate.cardKind === "yellow-red" && existing.cardKind !== "yellow-red") {
+      existing.cardKind = "yellow-red";
+    }
+  }
+
+  return [...groups.values()].map(candidate => ({
+    kind: "card",
+    cardKind: candidate.cardKind,
+    raw: candidate.raw,
+    playerName: candidate.playerName,
+    minute: candidate.minute.display,
+    sortValue: actionSortValueFromMinute(candidate.minute, candidate.period, candidate.entry.index),
+    pointsPenalty: candidate.cardKind === "yellow-red" ? YELLOW_RED_POINTS : RED_CARD_POINTS,
+    key: actionKey(eventId, `card-${candidate.cardKind}`, candidate.raw, candidate.playerName),
+  }));
 }
 
 function isInjurySubstitution(item) {
@@ -396,7 +458,6 @@ function isInjurySubstitution(item) {
   const substitution = item?.substitution === true
     || type.includes("substitution")
     || text.startsWith("substitution");
-
   if (!substitution) return false;
 
   return [
@@ -416,7 +477,6 @@ function isInjurySubstitution(item) {
 
 function parseInjuredPlayerFromText(text) {
   const value = String(text || "");
-
   for (const pattern of [
     /replaces\s+(.+?)\s+(?:because of|due to|following)\s+(?:an?\s+)?injury/i,
     /(.+?)\s+is replaced by\s+.+?\s+(?:because of|due to|following)\s+(?:an?\s+)?injury/i,
@@ -426,62 +486,64 @@ function parseInjuredPlayerFromText(text) {
     const match = value.match(pattern);
     if (match?.[1]) return match[1].replace(/\s*\([^)]*\)\s*$/, "").trim();
   }
-
   return null;
 }
 
 function extractInjuredPlayer(item) {
   const participants = getParticipants(item);
-
   const outgoing = participants.find(participant => {
     const role = participantRole(participant);
     return role.includes("out") || role.includes("off") || role.includes("replaced");
   });
-
-  const fromRole = participantName(outgoing);
-  if (fromRole) return fromRole;
-
-  const fromText = parseInjuredPlayerFromText(eventText(item));
-  if (fromText) return fromText;
-
-  return null;
+  return participantName(outgoing) || parseInjuredPlayerFromText(eventText(item)) || null;
 }
 
-function getInjuries(summary, event) {
+function uniqueInjuries(summary, event) {
   const eventId = String(event?.id || "event");
+  const groups = new Map();
 
-  return allMatchEntries(summary, event)
-    .map((item, index) => ({ item, index }))
-    .filter(({ item }) => isInjurySubstitution(item))
-    .map(({ item, index }) => {
-      const playerName = extractInjuredPlayer(item);
-      if (!playerName) return null;
+  for (const entry of collectMatchEntries(summary, event)) {
+    if (!isInjurySubstitution(entry.item)) continue;
+    const playerName = extractInjuredPlayer(entry.item);
+    if (!playerName) continue;
 
-      const minute = parseMinute(item?.clock?.displayValue ?? item?.clock);
-      return {
-        kind: "injury",
-        raw: item,
-        playerName,
-        minute: minute.display,
-        sortValue: actionSortValue(item, index),
-        key: actionKey(eventId, "injury", item, playerName),
-      };
-    })
-    .filter(Boolean);
+    const minute = parseMinute(entry.item?.clock?.displayValue ?? entry.item?.clock);
+    const playerKey = normalize(playerName);
+    const groupKey = playerKey ? `injury|${playerKey}` : `injury|${normalize(eventText(entry.item))}`;
+    const candidate = {
+      entry,
+      raw: entry.item,
+      playerName,
+      minute,
+      quality: entryQuality(entry) + (minute.valid ? 5 : 0),
+      period: asNumber(entry.item?.period?.number ?? entry.item?.period) || 0,
+    };
+
+    const existing = groups.get(groupKey);
+    if (!existing || candidate.quality > existing.quality) groups.set(groupKey, candidate);
+  }
+
+  return [...groups.values()].map(candidate => ({
+    kind: "injury",
+    raw: candidate.raw,
+    playerName: candidate.playerName,
+    minute: candidate.minute.display,
+    sortValue: actionSortValueFromMinute(candidate.minute, candidate.period, candidate.entry.index),
+    key: actionKey(eventId, "injury", candidate.raw, candidate.playerName),
+  }));
 }
 
 function getLiveActions(summary, event) {
   return [
-    ...getGoals(summary, event),
-    ...getCards(summary, event),
-    ...getInjuries(summary, event),
+    ...uniqueGoals(summary, event),
+    ...uniqueCards(summary, event),
+    ...uniqueInjuries(summary, event),
   ].sort((a, b) => a.sortValue - b.sortValue);
 }
 
 function extractMarker(message) {
   for (const embed of message?.embeds || []) {
     const footer = String(embed?.footer?.text || "");
-
     for (const prefix of [MARKER_PREFIX, LEGACY_GOAL_MARKER_PREFIX]) {
       const index = footer.indexOf(prefix);
       if (index < 0) continue;
@@ -496,13 +558,11 @@ async function hydrateSeen(channel, botUserId) {
   const seen = new Set();
   const messages = await channel.messages.fetch({ limit: HISTORY_SCAN_LIMIT }).catch(() => null);
   if (!messages) return seen;
-
   for (const message of messages.values()) {
     if (message.author?.id !== botUserId) continue;
     const marker = extractMarker(message);
     if (marker) seen.add(marker);
   }
-
   return seen;
 }
 
@@ -517,7 +577,6 @@ function addUniqueMapValue(map, key, value) {
     map.set(key, value);
     return;
   }
-
   const existing = map.get(key);
   if (!existing || existing.managerId !== value.managerId || existing.playerId !== value.playerId) {
     map.set(key, null);
@@ -527,27 +586,22 @@ function addUniqueMapValue(map, key, value) {
 function buildKickbasePlayerIndex(players) {
   const exact = new Map();
   const surname = new Map();
-
   for (const player of players || []) {
     const fullKey = normalize(player.playerName);
     if (!fullKey) continue;
     addUniqueMapValue(exact, fullKey, player);
-
     const tokens = fullKey.split(" ").filter(Boolean);
     const last = tokens[tokens.length - 1];
     if (last) addUniqueMapValue(surname, last, player);
   }
-
   return { exact, surname };
 }
 
 function resolveKickbaseOwner(playerName, index) {
   const key = normalize(playerName);
   if (!key) return null;
-
   const exact = index.exact.get(key);
   if (exact) return exact;
-
   const tokens = key.split(" ").filter(Boolean);
   const last = tokens[tokens.length - 1];
   return last ? index.surname.get(last) || null : null;
@@ -574,21 +628,22 @@ async function buildDiscordManagerMap(guild) {
     ].filter(Boolean);
 
     for (const name of names) {
-      const key = normalize(name);
+      const key = normalizeManagerKey(name);
       if (!key) continue;
       if (map.has(key) && map.get(key) !== manager.userId) map.set(key, null);
       else if (!map.has(key)) map.set(key, manager.userId);
     }
   }
 
+  applyManagerAliases(map);
   discordManagerMapCache.set(guild.id, { map, expiresAt: Date.now() + 5 * 60_000 });
   return map;
 }
 
 function ownerTag(owner, discordManagerMap) {
   if (!owner?.managerName) return { text: "", userId: null };
-  const userId = discordManagerMap.get(normalize(owner.managerName));
-
+  const userId = discordManagerMap.get(normalizeManagerKey(owner.managerName))
+    || resolveManagerAlias(owner.managerName);
   if (userId) return { text: ` (<@${userId}>)`, userId };
   return { text: ` (**${escapeDiscordText(owner.managerName)}**)`, userId: null };
 }
@@ -748,7 +803,6 @@ async function processGuild(guild) {
 
     for (const { event, action } of pending) {
       if (state.seen.has(action.key)) continue;
-
       const post = buildPost(event, action, kickbaseIndex, discordManagerMap);
       if (!post) continue;
 
@@ -762,7 +816,6 @@ async function processGuild(guild) {
 
       if (!sent) continue;
       state.seen.add(action.key);
-
       const teams = getMatchTeams(event);
       console.log(`✅ Bundesliga ${action.kind} posted: ${teams.home.name} vs ${teams.away.name} — ${action.playerName}`);
     }
@@ -781,6 +834,6 @@ export function startBundesligaGoalFeedScheduler(client) {
   };
 
   setTimeout(() => run().catch(() => null), 15_000);
-  console.log(`⚽ Bundesliga live feed ready: channel=${GOAL_CHANNEL_ID}, interval=${POLL_INTERVAL_MS}ms, goals+cards+injuries`);
+  console.log(`⚽ Bundesliga live feed ready: channel=${GOAL_CHANNEL_ID}, interval=${POLL_INTERVAL_MS}ms, semantic-dedupe`);
   return setInterval(() => run().catch(() => null), POLL_INTERVAL_MS);
 }
