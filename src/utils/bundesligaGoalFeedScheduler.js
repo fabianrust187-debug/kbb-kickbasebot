@@ -6,13 +6,16 @@ import { getKickbaseLiveOwnership } from "./kickbaseLiveOwnership.js";
 const ESPN_LEAGUE = "ger.1";
 const ESPN_SCOREBOARD_BASE = `https://site.api.espn.com/apis/site/v2/sports/soccer/${ESPN_LEAGUE}/scoreboard`;
 const ESPN_SUMMARY_BASE = `https://site.api.espn.com/apis/site/v2/sports/soccer/${ESPN_LEAGUE}/summary`;
-const TEST_CHANNEL_ID = process.env.KBB_TEST_CHANNEL_ID || "1522249317656690929";
 const DEFAULT_GOAL_CHANNEL_ID = "1522249187666952254";
 const GOAL_CHANNEL_ID = process.env.KBB_GOAL_CHANNEL_ID || DEFAULT_GOAL_CHANNEL_ID;
 const POLL_INTERVAL_MS = Math.max(20_000, Number(process.env.KBB_GOAL_FEED_INTERVAL_MS || 30_000));
 const REQUEST_TIMEOUT_MS = Math.max(3000, Number(process.env.KBB_GOAL_FEED_TIMEOUT_MS || 10000));
-const MARKER_PREFIX = "KBBGOAL:";
+const MARKER_PREFIX = "KBBLIVE:";
+const LEGACY_GOAL_MARKER_PREFIX = "KBBGOAL:";
 const HISTORY_SCAN_LIMIT = 100;
+
+const RED_CARD_POINTS = -75;
+const YELLOW_RED_POINTS = -50;
 
 const guildStates = new Map();
 const runningGuilds = new Set();
@@ -128,6 +131,23 @@ function participantName(participant) {
   ).trim();
 }
 
+function eventText(item) {
+  return [
+    item?.shortText,
+    item?.text,
+    item?.description,
+    item?.type?.text,
+    item?.type?.displayName,
+    item?.type?.name,
+  ].filter(Boolean).join(" ").trim();
+}
+
+function getParticipants(item) {
+  if (Array.isArray(item?.participants)) return item.participants;
+  if (Array.isArray(item?.athletesInvolved)) return item.athletesInvolved;
+  return [];
+}
+
 function parseAssistFromText(text) {
   const value = String(text || "");
   for (const pattern of [
@@ -154,11 +174,7 @@ function parseScorerFromText(text) {
 }
 
 function extractGoalPeople(goal) {
-  const participants = Array.isArray(goal?.participants)
-    ? goal.participants
-    : Array.isArray(goal?.athletesInvolved)
-      ? goal.athletesInvolved
-      : [];
+  const participants = getParticipants(goal);
 
   let scorerParticipant = participants.find(item => {
     const role = participantRole(item);
@@ -170,7 +186,7 @@ function extractGoalPeople(goal) {
   }
 
   const assistParticipant = participants.find(item => participantRole(item).includes("assist")) || null;
-  const text = `${goal?.shortText || ""} ${goal?.text || ""}`.trim();
+  const text = eventText(goal);
 
   return {
     scorer: participantName(scorerParticipant) || parseScorerFromText(text) || "Unbekannter Torschütze",
@@ -187,67 +203,76 @@ function parseMinute(value) {
   return { minute, added, display: added ? `${minute}+${added}` : String(minute) };
 }
 
-function goalSortValue(goal, index) {
-  const period = asNumber(goal?.period?.number ?? goal?.period) || 0;
-  const clock = parseMinute(goal?.clock?.displayValue ?? goal?.clock);
+function actionSortValue(item, index) {
+  const period = asNumber(item?.period?.number ?? item?.period) || 0;
+  const clock = parseMinute(item?.clock?.displayValue ?? item?.clock);
   return period * 100000 + clock.minute * 100 + clock.added + index / 1000;
 }
 
-function scoringEntries(summary, event) {
+function allMatchEntries(summary, event) {
   const candidates = [
     ...(Array.isArray(summary?.keyEvents) ? summary.keyEvents : []),
+    ...(Array.isArray(summary?.commentary) ? summary.commentary : []),
     ...(Array.isArray(summary?.header?.competitions?.[0]?.details) ? summary.header.competitions[0].details : []),
     ...(Array.isArray(summary?.details) ? summary.details : []),
     ...(Array.isArray(getCompetition(event)?.details) ? getCompetition(event).details : []),
-  ].filter(item => item?.scoringPlay === true && item?.shootout !== true);
+  ];
 
   const seen = new Set();
-  return candidates.filter((goal, index) => {
-    const athletes = Array.isArray(goal?.athletesInvolved)
-      ? goal.athletesInvolved.map(participantName).join("|")
-      : "";
-    const key = String(goal?.id ?? goal?.uid ?? goal?.sequenceNumber ?? [
-      goal?.clock?.displayValue ?? goal?.clock,
-      goal?.team?.id,
-      goal?.type?.text,
-      athletes,
-      goal?.text,
-      index,
-    ].join("|"));
 
+  return candidates.filter((item, index) => {
+    if (!item || typeof item !== "object") return false;
+
+    const participants = getParticipants(item).map(participantName).filter(Boolean).join("|");
+    const explicit = String(item?.id ?? item?.uid ?? item?.sequenceNumber ?? "").trim();
+    const fallback = [
+      item?.clock?.displayValue ?? item?.clock,
+      item?.team?.id,
+      item?.type?.text,
+      participants,
+      item?.text,
+      item?.shortText,
+      index,
+    ].join("|");
+
+    const key = explicit || fallback;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
 }
 
-function goalKey(eventId, goal, scorer, score) {
-  const explicit = String(goal?.id ?? goal?.uid ?? goal?.sequenceNumber ?? "").trim();
-  if (explicit) return `${eventId}:${explicit}`;
+function actionKey(eventId, kind, item, playerName, extra = "") {
+  const explicit = String(item?.id ?? item?.uid ?? item?.sequenceNumber ?? "").trim();
+  if (explicit) return `${eventId}:${kind}:${explicit}`;
 
   const raw = [
     eventId,
-    goal?.period?.number ?? goal?.period,
-    goal?.clock?.displayValue ?? goal?.clock,
-    goal?.team?.id,
-    scorer,
-    score,
-    goal?.text,
+    kind,
+    item?.period?.number ?? item?.period,
+    item?.clock?.displayValue ?? item?.clock,
+    item?.team?.id,
+    playerName,
+    extra,
+    item?.text,
+    item?.shortText,
   ].join("|");
 
-  return `${eventId}:${crypto.createHash("sha1").update(raw).digest("hex").slice(0, 18)}`;
+  return `${eventId}:${kind}:${crypto.createHash("sha1").update(raw).digest("hex").slice(0, 18)}`;
 }
 
 function getGoals(summary, event) {
-  const rawGoals = scoringEntries(summary, event);
+  const rawGoals = allMatchEntries(summary, event)
+    .filter(item => item?.scoringPlay === true && item?.shootout !== true);
+
   const teams = getMatchTeams(event);
   let homeScore = 0;
   let awayScore = 0;
 
   return rawGoals
-    .map((goal, index) => ({ goal, index, sortValue: goalSortValue(goal, index) }))
+    .map((goal, index) => ({ goal, index, sortValue: actionSortValue(goal, index) }))
     .sort((a, b) => a.sortValue - b.sortValue)
-    .map(({ goal }) => {
+    .map(({ goal, index }) => {
       const people = extractGoalPeople(goal);
       const ownGoal = goal?.ownGoal === true || normalize(goal?.type?.text).includes("own goal");
       const penalty = goal?.penaltyKick === true || goal?.penalty === true || normalize(goal?.type?.text).includes("penalty");
@@ -272,24 +297,197 @@ function getGoals(summary, event) {
       const score = `${homeScore}:${awayScore}`;
 
       return {
+        kind: "goal",
+        raw: goal,
+        playerName: people.scorer,
         scorer: people.scorer,
         assist: people.assist,
         ownGoal,
         penalty,
         minute: minute.display,
         score,
-        key: goalKey(String(event?.id || "event"), goal, people.scorer, score),
+        sortValue: actionSortValue(goal, index),
+        key: actionKey(String(event?.id || "event"), "goal", goal, people.scorer, score),
       };
     });
+}
+
+function parseCardPlayerFromText(text) {
+  const value = String(text || "");
+
+  for (const pattern of [
+    /^([^,.]+?)\s+\([^)]+\)\s+is shown the red card/i,
+    /^([^,.]+?)\s+\([^)]+\)\s+is shown the second yellow card/i,
+    /red card[,:]\s*([^.;]+)/i,
+    /second yellow card[,:]\s*([^.;]+)/i,
+    /([^.;]+?)\s+is shown the red card/i,
+    /([^.;]+?)\s+is shown the second yellow card/i,
+  ]) {
+    const match = value.match(pattern);
+    if (match?.[1]) return match[1].trim();
+  }
+
+  return null;
+}
+
+function detectCardKind(item) {
+  const text = normalize(eventText(item));
+  const type = normalize(item?.type?.text ?? item?.type?.displayName ?? item?.type?.name ?? "");
+
+  const yellowRed = item?.yellowRedCard === true
+    || item?.secondYellow === true
+    || text.includes("second yellow")
+    || text.includes("yellow red")
+    || text.includes("yellow-red")
+    || text.includes("2nd yellow")
+    || type.includes("second yellow")
+    || type.includes("yellow red");
+
+  if (yellowRed) return "yellow-red";
+
+  const directRed = item?.redCard === true
+    || text.includes("red card")
+    || type.includes("red card");
+
+  return directRed ? "red" : null;
+}
+
+function extractCardPlayer(item) {
+  const participants = getParticipants(item);
+  const preferred = participants.find(participant => {
+    const role = participantRole(participant);
+    return role.includes("player") || role.includes("card") || role.includes("recipient");
+  });
+
+  return participantName(preferred)
+    || participantName(participants[0])
+    || participantName(item?.athlete)
+    || parseCardPlayerFromText(eventText(item));
+}
+
+function getCards(summary, event) {
+  const eventId = String(event?.id || "event");
+
+  return allMatchEntries(summary, event)
+    .map((item, index) => ({ item, index, cardKind: detectCardKind(item) }))
+    .filter(entry => entry.cardKind)
+    .map(({ item, index, cardKind }) => {
+      const playerName = extractCardPlayer(item);
+      if (!playerName) return null;
+
+      const minute = parseMinute(item?.clock?.displayValue ?? item?.clock);
+      return {
+        kind: "card",
+        cardKind,
+        raw: item,
+        playerName,
+        minute: minute.display,
+        sortValue: actionSortValue(item, index),
+        pointsPenalty: cardKind === "yellow-red" ? YELLOW_RED_POINTS : RED_CARD_POINTS,
+        key: actionKey(eventId, `card-${cardKind}`, item, playerName),
+      };
+    })
+    .filter(Boolean);
+}
+
+function isInjurySubstitution(item) {
+  const text = normalize(eventText(item));
+  const type = normalize(item?.type?.text ?? item?.type?.displayName ?? item?.type?.name ?? "");
+  const substitution = item?.substitution === true
+    || type.includes("substitution")
+    || text.startsWith("substitution");
+
+  if (!substitution) return false;
+
+  return [
+    "injury",
+    "injured",
+    "because of an injury",
+    "due to injury",
+    "following an injury",
+    "unable to continue",
+    "cannot continue",
+    "forced off",
+    "concussion",
+    "medical",
+    "verletz",
+  ].some(signal => text.includes(signal));
+}
+
+function parseInjuredPlayerFromText(text) {
+  const value = String(text || "");
+
+  for (const pattern of [
+    /replaces\s+(.+?)\s+(?:because of|due to|following)\s+(?:an?\s+)?injury/i,
+    /(.+?)\s+is replaced by\s+.+?\s+(?:because of|due to|following)\s+(?:an?\s+)?injury/i,
+    /(.+?)\s+(?:is|was)\s+unable to continue/i,
+    /(.+?)\s+(?:is|was)\s+forced off/i,
+  ]) {
+    const match = value.match(pattern);
+    if (match?.[1]) return match[1].replace(/\s*\([^)]*\)\s*$/, "").trim();
+  }
+
+  return null;
+}
+
+function extractInjuredPlayer(item) {
+  const participants = getParticipants(item);
+
+  const outgoing = participants.find(participant => {
+    const role = participantRole(participant);
+    return role.includes("out") || role.includes("off") || role.includes("replaced");
+  });
+
+  const fromRole = participantName(outgoing);
+  if (fromRole) return fromRole;
+
+  const fromText = parseInjuredPlayerFromText(eventText(item));
+  if (fromText) return fromText;
+
+  return null;
+}
+
+function getInjuries(summary, event) {
+  const eventId = String(event?.id || "event");
+
+  return allMatchEntries(summary, event)
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => isInjurySubstitution(item))
+    .map(({ item, index }) => {
+      const playerName = extractInjuredPlayer(item);
+      if (!playerName) return null;
+
+      const minute = parseMinute(item?.clock?.displayValue ?? item?.clock);
+      return {
+        kind: "injury",
+        raw: item,
+        playerName,
+        minute: minute.display,
+        sortValue: actionSortValue(item, index),
+        key: actionKey(eventId, "injury", item, playerName),
+      };
+    })
+    .filter(Boolean);
+}
+
+function getLiveActions(summary, event) {
+  return [
+    ...getGoals(summary, event),
+    ...getCards(summary, event),
+    ...getInjuries(summary, event),
+  ].sort((a, b) => a.sortValue - b.sortValue);
 }
 
 function extractMarker(message) {
   for (const embed of message?.embeds || []) {
     const footer = String(embed?.footer?.text || "");
-    const index = footer.indexOf(MARKER_PREFIX);
-    if (index < 0) continue;
-    const marker = footer.slice(index + MARKER_PREFIX.length).trim().split(/\s+/)[0];
-    if (marker) return marker;
+
+    for (const prefix of [MARKER_PREFIX, LEGACY_GOAL_MARKER_PREFIX]) {
+      const index = footer.indexOf(prefix);
+      if (index < 0) continue;
+      const marker = footer.slice(index + prefix.length).trim().split(/\s+/)[0];
+      if (marker) return marker;
+    }
   }
   return null;
 }
@@ -395,34 +593,94 @@ function ownerTag(owner, discordManagerMap) {
   return { text: ` (**${escapeDiscordText(owner.managerName)}**)`, userId: null };
 }
 
-function buildGoalPost(event, goal, kickbaseIndex, discordManagerMap) {
+function buildGoalPost(event, action, kickbaseIndex, discordManagerMap) {
   const teams = getMatchTeams(event);
-  const scorerOwner = resolveKickbaseOwner(goal.scorer, kickbaseIndex);
-  const assistOwner = goal.assist ? resolveKickbaseOwner(goal.assist, kickbaseIndex) : null;
+  const scorerOwner = resolveKickbaseOwner(action.scorer, kickbaseIndex);
+  const assistOwner = action.assist ? resolveKickbaseOwner(action.assist, kickbaseIndex) : null;
   const scorerTag = ownerTag(scorerOwner, discordManagerMap);
   const assistTag = ownerTag(assistOwner, discordManagerMap);
-  const scorer = escapeDiscordText(goal.scorer);
-  const assist = goal.assist ? escapeDiscordText(goal.assist) : null;
-  const flags = [goal.penalty ? "Elfmeter" : null, goal.ownGoal ? "Eigentor" : null].filter(Boolean);
-  const testMode = GOAL_CHANNEL_ID === TEST_CHANNEL_ID;
+  const scorer = escapeDiscordText(action.scorer);
+  const assist = action.assist ? escapeDiscordText(action.assist) : null;
+  const flags = [action.penalty ? "Elfmeter" : null, action.ownGoal ? "Eigentor" : null].filter(Boolean);
 
   const description = [
-    `## ⚽ **${goal.score} durch ${scorer}**${scorerTag.text}`,
+    `## ⚽ **${action.score} durch ${scorer}**${scorerTag.text}`,
     assist ? `🎯 Vorlage: **${assist}**${assistTag.text}` : null,
     flags.length ? `ℹ️ ${flags.join(" • ")}` : null,
     "",
-    `**${escapeDiscordText(teams.home.name)} ${goal.score} ${escapeDiscordText(teams.away.name)}**`,
-    `⏱️ **${goal.minute}. Minute**`,
+    `**${escapeDiscordText(teams.home.name)} ${action.score} ${escapeDiscordText(teams.away.name)}**`,
+    `⏱️ **${action.minute}. Minute**`,
   ].filter(Boolean).join("\n");
 
   return {
     embed: buildKbbEmbed({
-      title: testMode ? "🧪🚨 TOR IN DER BUNDESLIGA!" : "🚨 TOR IN DER BUNDESLIGA!",
+      title: "🚨 TOR IN DER BUNDESLIGA!",
       description,
-      footer: `187 KICKBASEBANDE • ${testMode ? "LIVE TEST" : "LIVE"} • ${MARKER_PREFIX}${goal.key}`,
+      footer: `187 KICKBASEBANDE • LIVE • ${MARKER_PREFIX}${action.key}`,
     }),
     mentionUserIds: [...new Set([scorerTag.userId, assistTag.userId].filter(Boolean))],
   };
+}
+
+function buildCardPost(event, action, kickbaseIndex, discordManagerMap) {
+  const teams = getMatchTeams(event);
+  const owner = resolveKickbaseOwner(action.playerName, kickbaseIndex);
+  const tag = ownerTag(owner, discordManagerMap);
+  const player = escapeDiscordText(action.playerName);
+  const cardLabel = action.cardKind === "yellow-red" ? "GELB-ROTE KARTE" : "ROTE KARTE";
+  const title = action.cardKind === "yellow-red" ? "🟨🟥 GELB-ROT!" : "🟥 ROTE KARTE!";
+  const livePoints = owner?.livePoints;
+
+  const description = [
+    `## ${action.cardKind === "yellow-red" ? "🟨🟥" : "🟥"} **${cardLabel} für ${player}**${tag.text}`,
+    `💥 Kickbase-Kartenwertung: **${action.pointsPenalty} Punkte**`,
+    Number.isFinite(livePoints) ? `📊 Aktuelle Kickbase-Livepunkte: **${livePoints}**` : null,
+    "",
+    `**${escapeDiscordText(teams.home.name)} vs. ${escapeDiscordText(teams.away.name)}**`,
+    `⏱️ **${action.minute}. Minute**`,
+  ].filter(Boolean).join("\n");
+
+  return {
+    embed: buildKbbEmbed({
+      title,
+      description,
+      footer: `187 KICKBASEBANDE • LIVE • ${MARKER_PREFIX}${action.key}`,
+    }),
+    mentionUserIds: tag.userId ? [tag.userId] : [],
+  };
+}
+
+function buildInjuryPost(event, action, kickbaseIndex, discordManagerMap) {
+  const teams = getMatchTeams(event);
+  const owner = resolveKickbaseOwner(action.playerName, kickbaseIndex);
+  const tag = ownerTag(owner, discordManagerMap);
+  const player = escapeDiscordText(action.playerName);
+
+  const description = [
+    `## 🚑 **${player}**${tag.text}`,
+    "Der Spieler musste laut Live-Daten **verletzungsbedingt ausgewechselt** werden.",
+    "",
+    `**${escapeDiscordText(teams.home.name)} vs. ${escapeDiscordText(teams.away.name)}**`,
+    `⏱️ **${action.minute}. Minute**`,
+    "",
+    "ℹ️ Art und Schwere der Verletzung werden nicht geraten und nur ergänzt, wenn eine verlässliche Quelle sie ausdrücklich nennt.",
+  ].join("\n");
+
+  return {
+    embed: buildKbbEmbed({
+      title: "🚑 VERLETZUNGSBEDINGTE AUSWECHSLUNG",
+      description,
+      footer: `187 KICKBASEBANDE • LIVE • ${MARKER_PREFIX}${action.key}`,
+    }),
+    mentionUserIds: tag.userId ? [tag.userId] : [],
+  };
+}
+
+function buildPost(event, action, kickbaseIndex, discordManagerMap) {
+  if (action.kind === "goal") return buildGoalPost(event, action, kickbaseIndex, discordManagerMap);
+  if (action.kind === "card") return buildCardPost(event, action, kickbaseIndex, discordManagerMap);
+  if (action.kind === "injury") return buildInjuryPost(event, action, kickbaseIndex, discordManagerMap);
+  return null;
 }
 
 async function processGuild(guild) {
@@ -432,20 +690,20 @@ async function processGuild(guild) {
   try {
     const channel = await guild.channels.fetch(GOAL_CHANNEL_ID).catch(() => null);
     if (!channel?.isTextBased?.() || !channel?.messages?.fetch) {
-      console.warn(`⚠️ Bundesliga goal-feed channel ${GOAL_CHANNEL_ID} unavailable in ${guild.id}`);
+      console.warn(`⚠️ Bundesliga live-feed channel ${GOAL_CHANNEL_ID} unavailable in ${guild.id}`);
       return;
     }
 
     let state = guildStates.get(guild.id);
     if (!state) {
-      state = { hydrated: false, seen: new Set(), initializedEvents: new Set() };
+      state = { hydrated: false, seen: new Set() };
       guildStates.set(guild.id, state);
     }
 
     if (!state.hydrated) {
       state.seen = await hydrateSeen(channel, guild.client.user?.id);
       state.hydrated = true;
-      console.log(`⚽ Bundesliga goal-feed recovery ${guild.name}: ${state.seen.size} known marker(s)`);
+      console.log(`⚽ Bundesliga live-feed recovery ${guild.name}: ${state.seen.size} known marker(s)`);
     }
 
     const scoreboard = await fetchJson(scoreboardUrl());
@@ -468,11 +726,9 @@ async function processGuild(guild) {
       });
       if (!summary) continue;
 
-      const goals = getGoals(summary, event);
-      state.initializedEvents.add(eventId);
-
-      for (const goal of goals) {
-        if (!state.seen.has(goal.key)) pending.push({ event, goal });
+      const actions = getLiveActions(summary, event);
+      for (const action of actions) {
+        if (!state.seen.has(action.key)) pending.push({ event, action });
       }
     }
 
@@ -485,29 +741,33 @@ async function processGuild(guild) {
 
     const kickbaseIndex = buildKickbasePlayerIndex(kickbaseLive.ok ? kickbaseLive.players : []);
     if (!kickbaseLive.ok) {
-      console.warn(`⚠️ Bundesliga goal-feed Kickbase ownership unavailable: ${kickbaseLive.error || kickbaseLive.code}`);
+      console.warn(`⚠️ Bundesliga live-feed Kickbase ownership unavailable: ${kickbaseLive.error || kickbaseLive.code}`);
     }
 
-    for (const { event, goal } of pending) {
-      if (state.seen.has(goal.key)) continue;
+    pending.sort((a, b) => a.action.sortValue - b.action.sortValue);
 
-      const post = buildGoalPost(event, goal, kickbaseIndex, discordManagerMap);
+    for (const { event, action } of pending) {
+      if (state.seen.has(action.key)) continue;
+
+      const post = buildPost(event, action, kickbaseIndex, discordManagerMap);
+      if (!post) continue;
+
       const sent = await channel.send({
         embeds: [post.embed],
         allowedMentions: { users: post.mentionUserIds, parse: [] },
       }).catch(error => {
-        console.error(`❌ Bundesliga goal-feed post failed for ${guild.id}:`, error?.message || error);
+        console.error(`❌ Bundesliga live-feed post failed for ${guild.id}:`, error?.message || error);
         return null;
       });
 
       if (!sent) continue;
-      state.seen.add(goal.key);
+      state.seen.add(action.key);
 
       const teams = getMatchTeams(event);
-      console.log(`✅ Bundesliga goal posted: ${teams.home.name} ${goal.score} ${teams.away.name} — ${goal.scorer}`);
+      console.log(`✅ Bundesliga ${action.kind} posted: ${teams.home.name} vs ${teams.away.name} — ${action.playerName}`);
     }
   } catch (error) {
-    console.error(`❌ Bundesliga goal-feed poll failed for ${guild.id}:`, error?.message || error);
+    console.error(`❌ Bundesliga live-feed poll failed for ${guild.id}:`, error?.message || error);
   } finally {
     runningGuilds.delete(guild.id);
   }
@@ -521,6 +781,6 @@ export function startBundesligaGoalFeedScheduler(client) {
   };
 
   setTimeout(() => run().catch(() => null), 15_000);
-  console.log(`⚽ Bundesliga live goal feed ready: channel=${GOAL_CHANNEL_ID}, interval=${POLL_INTERVAL_MS}ms, date=Europe/Berlin`);
+  console.log(`⚽ Bundesliga live feed ready: channel=${GOAL_CHANNEL_ID}, interval=${POLL_INTERVAL_MS}ms, goals+cards+injuries`);
   return setInterval(() => run().catch(() => null), POLL_INTERVAL_MS);
 }
