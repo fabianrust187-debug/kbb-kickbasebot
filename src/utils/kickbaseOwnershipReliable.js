@@ -161,27 +161,36 @@ function looksLikePlayer(value) {
   return Boolean(id && hasName && playerSignals);
 }
 
-function extractPlayerList(data, depth = 0) {
-  if (!data || depth > 3) return [];
-  if (Array.isArray(data)) {
-    if (data.some(looksLikePlayer)) return data.filter(item => item && typeof item === "object");
-    return [];
-  }
-  if (typeof data !== "object") return [];
+function extractPlayerList(data) {
+  const found = new Map();
 
-  const preferredKeys = ["lp", "pl", "players", "it", "p", "squad"];
-  for (const key of preferredKeys) {
-    if (!(key in data)) continue;
-    const found = extractPlayerList(data[key], depth + 1);
-    if (found.length) return found;
-  }
+  const visit = (value, depth = 0) => {
+    if (!value || depth > 6) return;
 
-  for (const value of Object.values(data)) {
-    if (!value || typeof value !== "object") continue;
-    const found = extractPlayerList(value, depth + 1);
-    if (found.length) return found;
-  }
-  return [];
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, depth + 1);
+      return;
+    }
+
+    if (typeof value !== "object") return;
+
+    if (looksLikePlayer(value)) {
+      const id = String(value?.i ?? value?.id ?? value?.pi ?? value?.playerId ?? "").trim();
+      const name = playerName(value);
+      const key = id ? `id:${id}` : (name ? `name:${normalizeKickbasePlayerName(name)}` : null);
+      if (key) {
+        const existing = found.get(key) || {};
+        found.set(key, { ...existing, ...value });
+      }
+    }
+
+    for (const nested of Object.values(value)) {
+      if (nested && typeof nested === "object") visit(nested, depth + 1);
+    }
+  };
+
+  visit(data);
+  return [...found.values()];
 }
 
 function parsePlayers(data, manager, { live = false } = {}) {
@@ -251,24 +260,39 @@ async function loadManagerSquad(leagueId, manager) {
   const paths = [
     `/leagues/${leagueId}/managers/${manager.managerId}/squad`,
     `/leagues/${leagueId}/managers/${manager.managerId}/players`,
+    `/leagues/${leagueId}/users/${manager.managerId}/squad`,
     `/leagues/${leagueId}/users/${manager.managerId}/teamcenter`,
     `/leagues/${leagueId}/users/${manager.managerId}/players`,
   ];
+
+  const combined = new Map();
+  const keyOf = player => player.playerId
+    ? `id:${player.playerId}`
+    : `name:${normalizeKickbasePlayerName(player.playerName)}`;
 
   for (const path of paths) {
     try {
       const data = await apiGet(path);
       const players = parsePlayers(data, manager);
-      if (players.length) {
-        console.log(`👥 Kickbase squad ${manager.managerName}: ${players.length} player(s) via ${path}`);
-        return players;
+      if (!players.length) {
+        console.warn(`⚠️ Kickbase squad ${manager.managerName}: response from ${path} contained no recognized player list`);
+        continue;
       }
-      console.warn(`⚠️ Kickbase squad ${manager.managerName}: response from ${path} contained no recognized player list`);
+
+      console.log(`👥 Kickbase squad source ${manager.managerName}: ${players.length} player(s) via ${path}`);
+      for (const player of players) {
+        const key = keyOf(player);
+        const existing = combined.get(key) || {};
+        combined.set(key, { ...existing, ...player });
+      }
     } catch (error) {
-      console.warn(`⚠️ Kickbase ownership fallback failed ${path}: ${error?.message || error}`);
+      console.warn(`⚠️ Kickbase ownership source failed ${path}: ${error?.message || error}`);
     }
   }
-  return [];
+
+  const result = [...combined.values()];
+  console.log(`👥 Kickbase full roster ${manager.managerName}: ${result.length} unique player(s) from all available sources`);
+  return result;
 }
 
 function sameManager(matches) {
@@ -298,9 +322,6 @@ export function findOwnerInOwnershipSnapshot(playerNameToFind, snapshot) {
   });
   if (surnameMatches.length) return sameManager(surnameMatches);
 
-  // Some Kickbase payloads expose only the surname while ESPN uses the full name.
-  // As a final safe fallback, accept contained-name matches only when every hit
-  // still belongs to the same manager.
   const contained = snapshot.players.filter(player => {
     const key = normalizeKickbasePlayerName(player.playerName);
     if (!key) return false;
