@@ -271,27 +271,42 @@ async function loadManagerSquad(leagueId, manager) {
   return [];
 }
 
+function sameManager(matches) {
+  if (!matches.length) return null;
+  const managerIds = new Set(matches.map(player => String(player.managerId || "")).filter(Boolean));
+  if (managerIds.size !== 1) return null;
+
+  const preferred = matches.find(player => player.live) || matches.find(player => player.playerId) || matches[0];
+  return preferred || null;
+}
+
 export function findOwnerInOwnershipSnapshot(playerNameToFind, snapshot) {
   if (!snapshot?.ok || !Array.isArray(snapshot.players)) return null;
   const wanted = normalizeKickbasePlayerName(playerNameToFind);
   if (!wanted) return null;
 
   const exact = snapshot.players.filter(player => normalizeKickbasePlayerName(player.playerName) === wanted);
-  if (exact.length === 1) return exact[0];
-  if (exact.length > 1) {
-    const uniqueManagers = new Set(exact.map(player => player.managerId));
-    return uniqueManagers.size === 1 ? exact[0] : null;
-  }
+  if (exact.length) return sameManager(exact);
 
   const wantedParts = wanted.split(" ").filter(Boolean);
   const surname = wantedParts.at(-1);
   if (!surname) return null;
+
   const surnameMatches = snapshot.players.filter(player => {
     const parts = normalizeKickbasePlayerName(player.playerName).split(" ").filter(Boolean);
     return parts.at(-1) === surname;
   });
-  if (surnameMatches.length === 1) return surnameMatches[0];
-  return null;
+  if (surnameMatches.length) return sameManager(surnameMatches);
+
+  // Some Kickbase payloads expose only the surname while ESPN uses the full name.
+  // As a final safe fallback, accept contained-name matches only when every hit
+  // still belongs to the same manager.
+  const contained = snapshot.players.filter(player => {
+    const key = normalizeKickbasePlayerName(player.playerName);
+    if (!key) return false;
+    return key.includes(wanted) || wanted.includes(key);
+  });
+  return sameManager(contained);
 }
 
 export function findSimilarOwnershipPlayers(playerNameToFind, snapshot, limit = 8) {
