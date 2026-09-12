@@ -10,6 +10,7 @@ import pingCommand from "./commands/ping.js";
 import kbbCommand from "./commands/kbb.js";
 import { runKbbHelp, runKickbaseInfo } from "./commands/kbbDiagnostics.js";
 import { runKickbaseFeedTest } from "./commands/kbbFeedTest.js";
+import { runKickbaseOwnerTest } from "./commands/kbbOwnerTest.js";
 import { runTop5Start } from "./commands/kbbTop5Start.js";
 import { startTop5DeadlineScheduler } from "./utils/top5Deadline.js";
 import { startKickbaseTransferFeedScheduler } from "./utils/kickbaseTransferFeedScheduler.js";
@@ -46,7 +47,7 @@ client.once(Events.ClientReady, async () => {
   startBundesligaLiveFeedSchedulerV3(client);
   console.log("⚽ Bundesliga live feed V3 scheduler started.");
 
-  console.log("🧪 Kickbase feed-test route active.");
+  console.log("🧪 Kickbase diagnostics routes active.");
 });
 
 client.on(Events.GuildCreate, async (guild) => {
@@ -74,6 +75,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.commandName === "kbb") {
       const subcommand = interaction.options.getSubcommand(false);
       if (subcommand === "kickbase-info") return runKickbaseInfo(interaction);
+      if (subcommand === "owner-test") return runKickbaseOwnerTest(interaction);
       if (subcommand === "feed-test") {
         console.log(`🧪 /kbb feed-test requested by ${interaction.user.tag} (${interaction.user.id})`);
         if (!interaction.deferred && !interaction.replied) {
