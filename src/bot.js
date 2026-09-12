@@ -14,7 +14,7 @@ import { runKickbaseOwnerTest } from "./commands/kbbOwnerTest.js";
 import { runTop5Start } from "./commands/kbbTop5Start.js";
 import { startTop5DeadlineScheduler } from "./utils/top5Deadline.js";
 import { startKickbaseTransferFeedScheduler } from "./utils/kickbaseTransferFeedScheduler.js";
-import { startBundesligaLiveFeedSchedulerV3 } from "./utils/bundesligaLiveFeedSchedulerV3.js";
+import { startBundesligaLiveFeedSchedulerV4 } from "./utils/bundesligaLiveFeedSchedulerV4.js";
 import { handleTop5Button, handleTop5ButtonModal } from "./utils/top5ButtonHandler.js";
 import { runTop5ResetWithUi } from "./utils/top5ResetHandler.js";
 
@@ -44,8 +44,8 @@ client.once(Events.ClientReady, async () => {
   startKickbaseTransferFeedScheduler(client);
   console.log("💸 Automatic Kickbase transfer feed scheduler started.");
 
-  startBundesligaLiveFeedSchedulerV3(client);
-  console.log("⚽ Bundesliga live feed V3 scheduler started.");
+  startBundesligaLiveFeedSchedulerV4(client);
+  console.log("⚽ Bundesliga live feed V4 scheduler started.");
 
   console.log("🧪 Kickbase diagnostics routes active.");
 });
