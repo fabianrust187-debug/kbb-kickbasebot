@@ -1,5 +1,12 @@
-const DEFAULT_ALIASES = new Map([
+const DIRECT_ALIASES = new Map([
   ["forever20", "1527344409451040879"],
+]);
+
+// Kickbase display name -> Discord manager name from the managed 14-player roster.
+// This avoids hard-coding a Discord ID when the existing manager roster already
+// contains the correct Discord account.
+const MANAGER_NAME_ALIASES = new Map([
+  ["josephinerst", "josephine"],
 ]);
 
 export function normalizeManagerKey(value) {
@@ -13,12 +20,19 @@ export function normalizeManagerKey(value) {
 
 export function applyManagerAliases(map) {
   if (!(map instanceof Map)) return map;
-  for (const [name, userId] of DEFAULT_ALIASES.entries()) {
+
+  for (const [name, userId] of DIRECT_ALIASES.entries()) {
     map.set(name, userId);
   }
+
+  for (const [kickbaseName, discordManagerName] of MANAGER_NAME_ALIASES.entries()) {
+    const userId = map.get(normalizeManagerKey(discordManagerName));
+    if (userId) map.set(normalizeManagerKey(kickbaseName), userId);
+  }
+
   return map;
 }
 
 export function resolveManagerAlias(name) {
-  return DEFAULT_ALIASES.get(normalizeManagerKey(name)) || null;
+  return DIRECT_ALIASES.get(normalizeManagerKey(name)) || null;
 }
