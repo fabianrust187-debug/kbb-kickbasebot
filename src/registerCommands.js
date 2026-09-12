@@ -26,6 +26,19 @@ function addKbbDiagnosticSubcommands(json) {
     },
     {
       type: 1,
+      name: "owner-test",
+      description: "Kickbase-Besitzer eines Spielers prüfen",
+      options: [
+        {
+          type: 3,
+          name: "spieler",
+          description: "Spielername, z. B. Fábio Silva",
+          required: true,
+        },
+      ],
+    },
+    {
+      type: 1,
       name: "feed-test",
       description: "Neueste Kickbase-Transfers nur im Testkanal ausgeben",
       options: [
