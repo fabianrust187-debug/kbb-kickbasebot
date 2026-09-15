@@ -12,6 +12,7 @@ export const LIVETICKER_NOTIFICATION_BUTTON_ID = "kbb:liveticker-notifications:t
 
 const CONTROL_MARKER = "KBB-LIVETICKER-NOTIFICATIONS-V1";
 const HISTORY_SCAN_LIMIT = 100;
+const SEND_GUARD = Symbol.for("kbb.liveticker.notification.send.guard");
 
 function buttonRow() {
   return new ActionRowBuilder().addComponents(
@@ -32,7 +33,7 @@ function controlEmbed() {
       `**Benachrichtigungsrolle:** <@&${LIVETICKER_NOTIFICATION_ROLE_ID}>`,
       "",
       "🔔 **Rolle aktiv:** Du wirst bei deinen Spielern bzw. Transfers markiert.",
-      "🔕 **Rolle aus:** Die Meldung bleibt sichtbar, du erhältst aber keinen Manager-Tag vom Bot.",
+      "🔕 **Rolle aus:** Die Meldung bleibt sichtbar, du erhältst aber keinen Ping vom Bot.",
       "",
       "Drücke den Button erneut, um deinen aktuellen Status jederzeit umzuschalten.",
     ].join("\n"),
@@ -79,6 +80,48 @@ async function seedCurrentManagers(guild, role) {
   return { added, failed };
 }
 
+export async function getLivetickerNotificationEnabledUserIds(guild, userIds) {
+  const uniqueIds = [...new Set((userIds || []).filter(Boolean).map(String))];
+  const enabled = new Set();
+
+  await Promise.all(uniqueIds.map(async userId => {
+    const member = await fetchMember(guild, userId);
+    if (member?.roles?.cache?.has(LIVETICKER_NOTIFICATION_ROLE_ID)) enabled.add(userId);
+  }));
+
+  return enabled;
+}
+
+export async function installLivetickerNotificationSendGuard(client) {
+  for (const guild of client.guilds.cache.values()) {
+    const channel = await guild.channels.fetch(LIVETICKER_CHANNEL_ID).catch(() => null);
+    if (!channel?.isTextBased?.() || typeof channel.send !== "function" || channel[SEND_GUARD]) continue;
+
+    const originalSend = channel.send.bind(channel);
+    Object.defineProperty(channel, SEND_GUARD, { value: true, enumerable: false });
+
+    channel.send = async payload => {
+      const requested = Array.isArray(payload?.allowedMentions?.users)
+        ? payload.allowedMentions.users.map(String)
+        : [];
+
+      if (!requested.length) return originalSend(payload);
+
+      const enabled = await getLivetickerNotificationEnabledUserIds(guild, requested);
+      return originalSend({
+        ...payload,
+        allowedMentions: {
+          ...(payload.allowedMentions || {}),
+          users: requested.filter(userId => enabled.has(userId)),
+          parse: [],
+        },
+      });
+    };
+
+    console.log(`🔔 Liveticker notification send-guard active in ${guild.name}.`);
+  }
+}
+
 export async function ensureLivetickerNotificationControl(client) {
   for (const guild of client.guilds.cache.values()) {
     const channel = await guild.channels.fetch(LIVETICKER_CHANNEL_ID).catch(() => null);
@@ -90,19 +133,21 @@ export async function ensureLivetickerNotificationControl(client) {
       : [];
 
     if (controls.length) {
-      const keep = controls.sort((a, b) => b.createdTimestamp - a.createdTimestamp)[0];
+      const sorted = controls.sort((a, b) => b.createdTimestamp - a.createdTimestamp);
+      const keep = sorted[0];
       await keep.edit({ embeds: [controlEmbed()], components: [buttonRow()] }).catch(error => {
         console.warn(`⚠️ Could not refresh liveticker notification control: ${error?.message || error}`);
       });
-      for (const duplicate of controls.slice(1)) {
+      for (const duplicate of sorted.slice(1)) {
         await duplicate.delete().catch(() => null);
       }
       console.log(`🔔 Liveticker notification control restored in ${guild.name}.`);
       continue;
     }
 
-    // First migration only: preserve the old behaviour (notifications on for current
-    // league managers). From then on every user controls the role themselves.
+    // First migration only: preserve the previous behaviour (notifications enabled
+    // for current league managers). After the control message exists, every member
+    // owns the preference through the role toggle and restarts never re-enable it.
     const role = await guild.roles.fetch(LIVETICKER_NOTIFICATION_ROLE_ID).catch(() => null);
     if (role) {
       const seeded = await seedCurrentManagers(guild, role);
@@ -148,23 +193,11 @@ export async function handleLivetickerNotificationButton(interaction) {
   const active = member.roles.cache.has(role.id);
   if (active) {
     await member.roles.remove(role, "User disabled KBB liveticker notifications");
-    await interaction.editReply("🔕 **Liveticker-Benachrichtigungen deaktiviert.** Du wirst vom Bot bei Live- und Transfermeldungen nicht mehr markiert.");
+    await interaction.editReply("🔕 **Liveticker-Benachrichtigungen deaktiviert.** Die Feed-Meldungen bleiben sichtbar, aber der Bot pingt dich dort nicht mehr.");
   } else {
     await member.roles.add(role, "User enabled KBB liveticker notifications");
-    await interaction.editReply("🔔 **Liveticker-Benachrichtigungen aktiviert.** Der Bot darf dich bei deinen Spielern bzw. Transfers wieder markieren.");
+    await interaction.editReply("🔔 **Liveticker-Benachrichtigungen aktiviert.** Der Bot darf dich bei deinen Spielern bzw. Transfers wieder pingen.");
   }
 
   return true;
-}
-
-export async function getLivetickerNotificationEnabledUserIds(guild, userIds) {
-  const uniqueIds = [...new Set((userIds || []).filter(Boolean).map(String))];
-  const enabled = new Set();
-
-  await Promise.all(uniqueIds.map(async userId => {
-    const member = await fetchMember(guild, userId);
-    if (member?.roles?.cache?.has(LIVETICKER_NOTIFICATION_ROLE_ID)) enabled.add(userId);
-  }));
-
-  return enabled;
 }
