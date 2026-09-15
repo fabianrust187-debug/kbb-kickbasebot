@@ -51,6 +51,11 @@ client.once(Events.ClientReady, async () => {
   // KBB_GOAL_CHANNEL_ID during module initialization.
   process.env.KBB_GOAL_CHANNEL_ID = LIVETICKER_CHANNEL_ID;
 
+  // Give the existing Discord recovery a short head start. Discloud deployments can
+  // start with an empty local manager JSON, while the durable 14-manager snapshot is
+  // restored from Discord immediately after login.
+  await new Promise(resolve => setTimeout(resolve, 8_000));
+
   await ensureLivetickerNotificationControl(client);
   await installLivetickerNotificationSendGuard(client);
 
