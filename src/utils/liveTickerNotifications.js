@@ -6,10 +6,10 @@ import {
 import { buildKbbEmbed } from "./embeds.js";
 import { getManagers } from "./managerStore.js";
 
-// Production liveticker is intentionally fixed for this league. Do not allow a
-// stale hosting variable to move the button or feeds back into an old channel.
+// Production liveticker + notification role are intentionally fixed for this league.
+// Stale hosting variables must not move the control or point it at an obsolete role.
 export const LIVETICKER_CHANNEL_ID = "1549519679968510022";
-export const LIVETICKER_NOTIFICATION_ROLE_ID = process.env.KBB_LIVETICKER_NOTIFICATION_ROLE_ID || "1549520307646107699";
+export const LIVETICKER_NOTIFICATION_ROLE_ID = "1549523629811826708";
 export const LIVETICKER_NOTIFICATION_BUTTON_ID = "kbb:liveticker-notifications:toggle:v2";
 
 const CONTROL_MARKER = "KBB-LIVETICKER-NOTIFICATIONS-V2";
