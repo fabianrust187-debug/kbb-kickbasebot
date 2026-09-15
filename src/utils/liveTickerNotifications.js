@@ -11,7 +11,6 @@ export const LIVETICKER_NOTIFICATION_ROLE_ID = process.env.KBB_LIVETICKER_NOTIFI
 export const LIVETICKER_NOTIFICATION_BUTTON_ID = "kbb:liveticker-notifications:toggle:v1";
 
 const CONTROL_MARKER = "KBB-LIVETICKER-NOTIFICATIONS-V1";
-const HISTORY_SCAN_LIMIT = 100;
 const SEND_GUARD = Symbol.for("kbb.liveticker.notification.send.guard");
 
 function buttonRow() {
@@ -60,6 +59,29 @@ async function fetchMember(guild, userId) {
     || await guild.members.fetch(userId).catch(() => null);
 }
 
+async function findControlMessages(channel, botUserId) {
+  const controls = [];
+  let before;
+
+  // Search enough history that the settings message remains durable even after a
+  // busy matchday has pushed it beyond Discord's latest 100 messages.
+  for (let page = 0; page < 10; page += 1) {
+    const batch = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) }).catch(() => null);
+    if (!batch?.size) break;
+
+    for (const message of batch.values()) {
+      if (message.author?.id === botUserId && messageHasControl(message)) controls.push(message);
+    }
+    if (controls.length) break;
+
+    const oldest = [...batch.values()].sort((a, b) => a.createdTimestamp - b.createdTimestamp)[0];
+    before = oldest?.id;
+    if (!before || batch.size < 100) break;
+  }
+
+  return controls;
+}
+
 async function seedCurrentManagers(guild, role) {
   if (!role?.editable) return { added: 0, failed: 0 };
 
@@ -92,6 +114,34 @@ export async function getLivetickerNotificationEnabledUserIds(guild, userIds) {
   return enabled;
 }
 
+function escapePlainMentionName(value) {
+  return String(value || "Manager")
+    .replace(/\\/g, "\\\\")
+    .replace(/([*_~`>|])/g, "\\$1")
+    .replace(/@/g, "＠");
+}
+
+async function suppressDisabledMentionMarkup(guild, embeds, disabledUserIds) {
+  if (!Array.isArray(embeds) || !disabledUserIds.length) return embeds;
+
+  const replacements = new Map();
+  await Promise.all(disabledUserIds.map(async userId => {
+    const member = await fetchMember(guild, userId);
+    replacements.set(userId, `@${escapePlainMentionName(member?.displayName || member?.user?.username || "Manager")}`);
+  }));
+
+  return embeds.map(embed => {
+    const data = typeof embed?.toJSON === "function" ? embed.toJSON() : { ...embed };
+    let description = data.description;
+    if (typeof description === "string") {
+      for (const [userId, replacement] of replacements.entries()) {
+        description = description.replaceAll(`<@${userId}>`, replacement).replaceAll(`<@!${userId}>`, replacement);
+      }
+    }
+    return { ...data, ...(typeof description === "string" ? { description } : {}) };
+  });
+}
+
 export async function installLivetickerNotificationSendGuard(client) {
   for (const guild of client.guilds.cache.values()) {
     const channel = await guild.channels.fetch(LIVETICKER_CHANNEL_ID).catch(() => null);
@@ -108,8 +158,12 @@ export async function installLivetickerNotificationSendGuard(client) {
       if (!requested.length) return originalSend(payload);
 
       const enabled = await getLivetickerNotificationEnabledUserIds(guild, requested);
+      const disabled = requested.filter(userId => !enabled.has(userId));
+      const embeds = await suppressDisabledMentionMarkup(guild, payload?.embeds, disabled);
+
       return originalSend({
         ...payload,
+        ...(embeds ? { embeds } : {}),
         allowedMentions: {
           ...(payload.allowedMentions || {}),
           users: requested.filter(userId => enabled.has(userId)),
@@ -127,10 +181,7 @@ export async function ensureLivetickerNotificationControl(client) {
     const channel = await guild.channels.fetch(LIVETICKER_CHANNEL_ID).catch(() => null);
     if (!channel?.isTextBased?.() || !channel?.messages?.fetch) continue;
 
-    const recent = await channel.messages.fetch({ limit: HISTORY_SCAN_LIMIT }).catch(() => null);
-    const controls = recent
-      ? [...recent.values()].filter(message => message.author?.id === client.user?.id && messageHasControl(message))
-      : [];
+    const controls = await findControlMessages(channel, client.user?.id);
 
     if (controls.length) {
       const sorted = controls.sort((a, b) => b.createdTimestamp - a.createdTimestamp);
