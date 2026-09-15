@@ -3,10 +3,13 @@ import { buildKbbEmbed } from "./embeds.js";
 import { formatTransferPrice, getLatestLeagueTransfers } from "./kickbaseFeed.js";
 import { getManagers } from "./managerStore.js";
 import { applyManagerAliases, normalizeManagerKey, resolveManagerAlias } from "./managerAliases.js";
+import {
+  LIVETICKER_CHANNEL_ID,
+  getLivetickerNotificationEnabledUserIds,
+} from "./liveTickerNotifications.js";
 
-const TRANSFER_CHANNEL_ID = process.env.KBB_TRANSFER_CHANNEL_ID || "1522249401735839784";
 const POLL_INTERVAL_MS = Math.max(30_000, Number(process.env.KBB_TRANSFER_FEED_INTERVAL_MS || 60_000));
-const INITIAL_BACKFILL = Math.max(0, Math.min(15, Number(process.env.KBB_TRANSFER_INITIAL_BACKFILL || 5)));
+const INITIAL_BACKFILL = Math.max(0, Math.min(15, Number(process.env.KBB_TRANSFER_INITIAL_BACKFILL || 0)));
 const HISTORY_SCAN_LIMIT = 100;
 const MARKER_PREFIX = "KBBTF:";
 
@@ -94,14 +97,15 @@ async function buildDiscordManagerMap(guild) {
   return applyManagerAliases(map);
 }
 
-function managerLabel(kickbaseName, discordManagerMap) {
+function managerLabel(kickbaseName, discordManagerMap, notificationEnabledIds) {
   const safeName = escapeDiscordText(kickbaseName);
   const userId = discordManagerMap.get(normalizeManagerKey(kickbaseName))
     || resolveManagerAlias(kickbaseName);
+  const mayNotify = Boolean(userId && notificationEnabledIds.has(String(userId)));
 
   return {
-    text: userId ? `**${safeName}** (<@${userId}>)` : `**${safeName}**`,
-    userId: userId || null,
+    text: mayNotify ? `**${safeName}** (<@${userId}>)` : `**${safeName}**`,
+    userId: mayNotify ? String(userId) : null,
   };
 }
 
@@ -112,12 +116,12 @@ function formatWhen(createdAt) {
   return `<t:${timestamp}:f> • <t:${timestamp}:R>`;
 }
 
-function buildTransferPost(transfer, discordManagerMap) {
+function buildTransferPost(transfer, discordManagerMap, notificationEnabledIds) {
   const key = transferKey(transfer);
-  const buyer = managerLabel(transfer.buyer, discordManagerMap);
+  const buyer = managerLabel(transfer.buyer, discordManagerMap, notificationEnabledIds);
   const seller = transfer.seller === "KICKBASE"
     ? null
-    : managerLabel(transfer.seller, discordManagerMap);
+    : managerLabel(transfer.seller, discordManagerMap, notificationEnabledIds);
   const player = escapeDiscordText(transfer.playerName);
   const price = formatTransferPrice(transfer.price);
 
@@ -155,7 +159,7 @@ async function processGuild(guild) {
   runningGuilds.add(guild.id);
 
   try {
-    const channel = await guild.channels.fetch(TRANSFER_CHANNEL_ID).catch(() => null);
+    const channel = await guild.channels.fetch(LIVETICKER_CHANNEL_ID).catch(() => null);
     if (!channel?.isTextBased?.() || !channel?.messages?.fetch) return;
 
     let state = guildStates.get(guild.id);
@@ -178,17 +182,29 @@ async function processGuild(guild) {
 
     let unseen = result.transfers.filter(transfer => !state.seen.has(transferKey(transfer)));
 
-    if (!state.bootstrapped && state.seen.size === 0 && INITIAL_BACKFILL >= 0) {
-      unseen = unseen.slice(0, INITIAL_BACKFILL);
+    // New liveticker channel migration: establish a clean baseline and do not flood
+    // old transfers into the new combined feed. Optional backfill can still be set
+    // explicitly via KBB_TRANSFER_INITIAL_BACKFILL.
+    if (!state.bootstrapped && state.seen.size === 0) {
+      const sortedNewest = [...result.transfers];
+      const backfillKeys = new Set(sortedNewest.slice(0, INITIAL_BACKFILL).map(transferKey));
+      for (const transfer of result.transfers) {
+        const key = transferKey(transfer);
+        if (!backfillKeys.has(key)) state.seen.add(key);
+      }
+      unseen = result.transfers.filter(transfer => backfillKeys.has(transferKey(transfer)));
+      console.log(`💸 Transfer feed baseline established in liveticker: existing=${result.transfers.length}, backfill=${unseen.length}`);
     }
 
     state.bootstrapped = true;
     if (!unseen.length) return;
 
     const discordManagerMap = await buildDiscordManagerMap(guild);
+    const managerUserIds = [...new Set([...discordManagerMap.values()].filter(Boolean).map(String))];
+    const notificationEnabledIds = await getLivetickerNotificationEnabledUserIds(guild, managerUserIds);
 
     for (const transfer of sortOldestFirst(unseen)) {
-      const post = buildTransferPost(transfer, discordManagerMap);
+      const post = buildTransferPost(transfer, discordManagerMap, notificationEnabledIds);
       if (state.seen.has(post.key)) continue;
 
       const sent = await channel.send({
@@ -201,7 +217,7 @@ async function processGuild(guild) {
 
       if (!sent) continue;
       state.seen.add(post.key);
-      console.log(`✅ Transfer feed posted: ${transfer.buyer} -> ${transfer.playerName} (${post.key})`);
+      console.log(`✅ Transfer feed posted in liveticker: ${transfer.buyer} -> ${transfer.playerName} (${post.key})`);
     }
   } finally {
     runningGuilds.delete(guild.id);
@@ -219,6 +235,6 @@ export function startKickbaseTransferFeedScheduler(client) {
 
   setTimeout(() => run().catch(() => null), 15_000);
 
-  console.log(`💸 Kickbase transfer feed active: channel=${TRANSFER_CHANNEL_ID}, interval=${POLL_INTERVAL_MS}ms`);
+  console.log(`💸 Kickbase transfer feed active: channel=${LIVETICKER_CHANNEL_ID}, interval=${POLL_INTERVAL_MS}ms`);
   return setInterval(() => run().catch(() => null), POLL_INTERVAL_MS);
 }
