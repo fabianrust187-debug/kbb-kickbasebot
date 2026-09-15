@@ -9,8 +9,11 @@ const ROSTER_HEADING = "## 👥 KBB Managerliste – Systemstand";
 
 function isRoundBoundary(message) {
   const content = String(message?.content || "");
-  return content.includes("Top-5-Abgabefrist beendet")
-    || content.includes("Neue Top-5-Runde gestartet");
+
+  // A deadline post does NOT start a new round. Late/corrective submissions can
+  // still belong to the same round and must survive a deploy/recovery. Only an
+  // explicit round-start marker separates two Top-5 rounds.
+  return content.includes("Neue Top-5-Runde gestartet");
 }
 
 function parseMarketValue(content) {
