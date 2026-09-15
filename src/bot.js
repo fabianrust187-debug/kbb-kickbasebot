@@ -14,9 +14,14 @@ import { runKickbaseOwnerTest } from "./commands/kbbOwnerTest.js";
 import { runTop5Start } from "./commands/kbbTop5Start.js";
 import { startTop5DeadlineScheduler } from "./utils/top5Deadline.js";
 import { startKickbaseTransferFeedScheduler } from "./utils/kickbaseTransferFeedScheduler.js";
-import { startBundesligaLiveFeedSchedulerV5 } from "./utils/bundesligaLiveFeedSchedulerV5.js";
 import { handleTop5Button, handleTop5ButtonModal } from "./utils/top5ButtonHandler.js";
 import { runTop5ResetWithUi } from "./utils/top5ResetHandler.js";
+import {
+  LIVETICKER_CHANNEL_ID,
+  ensureLivetickerNotificationControl,
+  handleLivetickerNotificationButton,
+  installLivetickerNotificationSendGuard,
+} from "./utils/liveTickerNotifications.js";
 
 const client = new Client({
   intents: [
@@ -41,11 +46,20 @@ client.once(Events.ClientReady, async () => {
   startTop5DeadlineScheduler(client);
   console.log("⏰ Top-5 deadline scheduler active: Tuesday 22:00 Europe/Berlin");
 
-  startKickbaseTransferFeedScheduler(client);
-  console.log("💸 Automatic Kickbase transfer feed scheduler started.");
+  // One shared production channel for transfers + Bundesliga live events.
+  // Set before dynamically importing the livefeed module because that module reads
+  // KBB_GOAL_CHANNEL_ID during module initialization.
+  process.env.KBB_GOAL_CHANNEL_ID = LIVETICKER_CHANNEL_ID;
 
+  await ensureLivetickerNotificationControl(client);
+  await installLivetickerNotificationSendGuard(client);
+
+  startKickbaseTransferFeedScheduler(client);
+  console.log(`💸 Automatic Kickbase transfer feed scheduler started in liveticker ${LIVETICKER_CHANNEL_ID}.`);
+
+  const { startBundesligaLiveFeedSchedulerV5 } = await import("./utils/bundesligaLiveFeedSchedulerV5.js");
   startBundesligaLiveFeedSchedulerV5(client);
-  console.log("⚽ Bundesliga live feed V5 scheduler started.");
+  console.log(`⚽ Bundesliga live feed V5 scheduler started in liveticker ${LIVETICKER_CHANNEL_ID}.`);
 
   console.log("🧪 Kickbase diagnostics routes active.");
 });
@@ -62,6 +76,7 @@ client.on(Events.GuildCreate, async (guild) => {
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.isButton()) {
+      if (await handleLivetickerNotificationButton(interaction)) return;
       if (await handleTop5Button(interaction)) return;
     }
 
