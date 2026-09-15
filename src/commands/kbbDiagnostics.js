@@ -2,11 +2,13 @@ import { PermissionFlagsBits } from "discord.js";
 import { buildErrorEmbed, buildKbbEmbed } from "../utils/embeds.js";
 import { getGuildSettings } from "../utils/guildSettings.js";
 import { getKickbaseConnectionInfo } from "../utils/kickbaseInfo.js";
+import {
+  LIVETICKER_CHANNEL_ID,
+  LIVETICKER_NOTIFICATION_ROLE_ID,
+} from "../utils/liveTickerNotifications.js";
 
 const DEFAULT_TOP5_CHANNEL_ID = process.env.TOP5_CHANNEL_ID || "1522249357179617331";
 const DEFAULT_TEST_CHANNEL_ID = process.env.KBB_TEST_CHANNEL_ID || "1522249317656690929";
-const DEFAULT_TRANSFER_CHANNEL_ID = process.env.KBB_TRANSFER_CHANNEL_ID || "1522249401735839784";
-const DEFAULT_GOAL_CHANNEL_ID = process.env.KBB_GOAL_CHANNEL_ID || "1522249187666952254";
 
 function hasManageServerPermission(interaction) {
   return !!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
@@ -127,10 +129,12 @@ export async function runKbbHelp(interaction) {
       "• `/kbb setup` — Channels setzen *(Admin)*",
       "",
       `**Top-5-Abgabe Channel:** <#${top5ChannelId}>`,
-      `**Transfermarkt Live-Feed:** <#${DEFAULT_TRANSFER_CHANNEL_ID}> — automatische Prüfung jede Minute`,
-      `**Bundesliga Livefeed:** <#${DEFAULT_GOAL_CHANNEL_ID}> — Prüfung ca. alle **30 Sekunden**`,
+      `**Gemeinsamer Liveticker:** <#${LIVETICKER_CHANNEL_ID}>`,
+      `**Liveticker-Benachrichtigungsrolle:** <@&${LIVETICKER_NOTIFICATION_ROLE_ID}>`,
       `**Feature-Test Channel:** <#${DEFAULT_TEST_CHANNEL_ID}>`,
-      "Der Bundesliga-Livefeed meldet Tore, Vorlagen, rote/gelb-rote Karten und ausdrücklich verletzungsbedingte Auswechslungen.",
+      "Im Liveticker erscheinen automatisch Kickbase-Transfers sowie Bundesliga-Tore, Vorlagen, rote/gelb-rote Karten und ausdrücklich verletzungsbedingte Auswechslungen.",
+      "Transferdaten werden ungefähr jede Minute, Bundesliga-Livedaten ungefähr alle 30 Sekunden geprüft.",
+      "Über den Button **Benachrichtigungen an / aus** im Liveticker kann jedes Mitglied die Benachrichtigungsrolle selbst umschalten. Ohne Rolle bleiben die Feed-Meldungen sichtbar, der Bot pingt den Manager aber nicht.",
       "Neue Tore werden kurz gesammelt und Informationen aus ESPN Scoring-Plays, Key-Events, Matchdetails und Commentary zusammengeführt, damit Spielstand und Vorlagengeber möglichst vollständig in einer einzigen Meldung erscheinen.",
       "Die Besitzerzuordnung ermittelt die Liga-Manager über Overview/Ranking und lädt anschließend deren vollständige Kickbase-Kader; doppelte Live-/Kaderdatensätze desselben Besitzers werden dabei nicht mehr als Mehrdeutigkeit behandelt.",
       "Nach Restart/Deploy werden bereits vorhandene Ereignisse des laufenden Spiels als Ausgangsstand übernommen und nicht erneut nachgepostet.",
