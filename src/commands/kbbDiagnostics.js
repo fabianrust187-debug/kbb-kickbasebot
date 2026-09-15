@@ -141,6 +141,7 @@ export async function runKbbHelp(interaction) {
       "**Kartenscoring:** Rot **-75**, Gelb-Rot **-50** Kickbase-Punkte.",
       "**Regulärer Rundenstart:** Freitag um **20:00 Uhr (Europe/Berlin)**.",
       "**Abgabefrist:** Dienstag um **22:00 Uhr (Europe/Berlin)**.",
+      "Sobald **14/14 Abgaben** im System erfasst sind, wird die Top-5-Runde automatisch endgültig geschlossen. Bereits verhängte Strafen für verspätete Abgaben bleiben dabei bestehen.",
       "Nach der Dienstagsfrist bleibt der Abgabe-Button weg, bis die nächste Runde am Freitag startet.",
     ].join("\n"),
   });
