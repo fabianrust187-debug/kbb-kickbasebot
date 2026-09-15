@@ -6,12 +6,24 @@ import {
 import { buildKbbEmbed } from "./embeds.js";
 import { getManagers } from "./managerStore.js";
 
-export const LIVETICKER_CHANNEL_ID = process.env.KBB_LIVETICKER_CHANNEL_ID || "1549519679968510022";
+// Production liveticker is intentionally fixed for this league. Do not allow a
+// stale hosting variable to move the button or feeds back into an old channel.
+export const LIVETICKER_CHANNEL_ID = "1549519679968510022";
 export const LIVETICKER_NOTIFICATION_ROLE_ID = process.env.KBB_LIVETICKER_NOTIFICATION_ROLE_ID || "1549520307646107699";
-export const LIVETICKER_NOTIFICATION_BUTTON_ID = "kbb:liveticker-notifications:toggle:v1";
+export const LIVETICKER_NOTIFICATION_BUTTON_ID = "kbb:liveticker-notifications:toggle:v2";
 
-const CONTROL_MARKER = "KBB-LIVETICKER-NOTIFICATIONS-V1";
+const CONTROL_MARKER = "KBB-LIVETICKER-NOTIFICATIONS-V2";
+const OLD_CONTROL_MARKERS = ["KBB-LIVETICKER-NOTIFICATIONS-V1"];
+const SEEDED_ROLE_PREFIX = "KBB-LIVETICKER-SEEDED-ROLE:";
 const SEND_GUARD = Symbol.for("kbb.liveticker.notification.send.guard");
+
+// Channels previously used by these feeds. A stale KBB_LIVETICKER_CHANNEL_ID
+// from the host is included only so an old control message can be cleaned up.
+const LEGACY_CONTROL_CHANNEL_IDS = [...new Set([
+  process.env.KBB_LIVETICKER_CHANNEL_ID,
+  "1522249187666952254", // former #kickbase-chat livefeed
+  "1522249401735839784", // former #transfermarkt feed
+].filter(id => id && id !== LIVETICKER_CHANNEL_ID))];
 
 function buttonRow() {
   return new ActionRowBuilder().addComponents(
@@ -23,7 +35,10 @@ function buttonRow() {
   );
 }
 
-function controlEmbed() {
+function controlEmbed({ seededRoleId = null } = {}) {
+  const footerParts = ["187 KICKBASEBANDE", CONTROL_MARKER];
+  if (seededRoleId) footerParts.push(`${SEEDED_ROLE_PREFIX}${seededRoleId}`);
+
   return buildKbbEmbed({
     title: "🔔 Liveticker-Benachrichtigungen",
     description: [
@@ -36,22 +51,31 @@ function controlEmbed() {
       "",
       "Drücke den Button erneut, um deinen aktuellen Status jederzeit umzuschalten.",
     ].join("\n"),
-    footer: `187 KICKBASEBANDE • ${CONTROL_MARKER}`,
+    footer: footerParts.join(" • "),
   });
 }
 
 function messageHasControl(message) {
   if (!message) return false;
   for (const embed of message.embeds || []) {
-    if (String(embed?.footer?.text || "").includes(CONTROL_MARKER)) return true;
+    const footer = String(embed?.footer?.text || "");
+    if ([CONTROL_MARKER, ...OLD_CONTROL_MARKERS].some(marker => footer.includes(marker))) return true;
   }
   for (const row of message.components || []) {
     for (const component of row.components || []) {
       const customId = component?.customId ?? component?.data?.custom_id;
-      if (customId === LIVETICKER_NOTIFICATION_BUTTON_ID) return true;
+      if (customId === LIVETICKER_NOTIFICATION_BUTTON_ID || String(customId || "").startsWith("kbb:liveticker-notifications:toggle:")) {
+        return true;
+      }
     }
   }
   return false;
+}
+
+function messageSeededForRole(message, roleId) {
+  if (!message || !roleId) return false;
+  return (message.embeds || []).some(embed =>
+    String(embed?.footer?.text || "").includes(`${SEEDED_ROLE_PREFIX}${roleId}`));
 }
 
 async function fetchMember(guild, userId) {
@@ -63,8 +87,7 @@ async function findControlMessages(channel, botUserId) {
   const controls = [];
   let before;
 
-  // Search enough history that the settings message remains durable even after a
-  // busy matchday has pushed it beyond Discord's latest 100 messages.
+  // Search enough history that the settings message survives busy matchdays.
   for (let page = 0; page < 10; page += 1) {
     const batch = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) }).catch(() => null);
     if (!batch?.size) break;
@@ -82,14 +105,34 @@ async function findControlMessages(channel, botUserId) {
   return controls;
 }
 
+async function cleanupLegacyControlMessages(guild, botUserId) {
+  for (const channelId of LEGACY_CONTROL_CHANNEL_IDS) {
+    const channel = await guild.channels.fetch(channelId).catch(() => null);
+    if (!channel?.isTextBased?.() || !channel?.messages?.fetch) continue;
+
+    const controls = await findControlMessages(channel, botUserId);
+    for (const message of controls) {
+      await message.delete().catch(() => null);
+    }
+    if (controls.length) {
+      console.log(`🧹 Removed ${controls.length} old liveticker control message(s) from channel ${channelId}.`);
+    }
+  }
+}
+
 async function seedCurrentManagers(guild, role) {
-  if (!role?.editable) return { added: 0, failed: 0 };
+  if (!role?.editable) return { attempted: false, added: 0, failed: 0 };
 
   let added = 0;
   let failed = 0;
   for (const manager of getManagers(guild.id)) {
     const member = await fetchMember(guild, manager.userId);
-    if (!member || member.roles.cache.has(role.id)) continue;
+    if (!member) {
+      failed += 1;
+      continue;
+    }
+    if (member.roles.cache.has(role.id)) continue;
+
     const ok = await member.roles.add(role, "KBB Liveticker notifications default-on migration")
       .then(() => true)
       .catch(error => {
@@ -99,7 +142,7 @@ async function seedCurrentManagers(guild, role) {
     if (ok) added += 1;
     else failed += 1;
   }
-  return { added, failed };
+  return { attempted: true, added, failed };
 }
 
 export async function getLivetickerNotificationEnabledUserIds(guild, userIds) {
@@ -178,43 +221,58 @@ export async function installLivetickerNotificationSendGuard(client) {
 
 export async function ensureLivetickerNotificationControl(client) {
   for (const guild of client.guilds.cache.values()) {
+    await cleanupLegacyControlMessages(guild, client.user?.id);
+
     const channel = await guild.channels.fetch(LIVETICKER_CHANNEL_ID).catch(() => null);
-    if (!channel?.isTextBased?.() || !channel?.messages?.fetch) continue;
-
-    const controls = await findControlMessages(channel, client.user?.id);
-
-    if (controls.length) {
-      const sorted = controls.sort((a, b) => b.createdTimestamp - a.createdTimestamp);
-      const keep = sorted[0];
-      await keep.edit({ embeds: [controlEmbed()], components: [buttonRow()] }).catch(error => {
-        console.warn(`⚠️ Could not refresh liveticker notification control: ${error?.message || error}`);
-      });
-      for (const duplicate of sorted.slice(1)) {
-        await duplicate.delete().catch(() => null);
-      }
-      console.log(`🔔 Liveticker notification control restored in ${guild.name}.`);
+    if (!channel?.isTextBased?.() || !channel?.messages?.fetch) {
+      console.error(`❌ Liveticker channel ${LIVETICKER_CHANNEL_ID} not found or not writable.`);
       continue;
     }
 
-    // First migration only: preserve the previous behaviour (notifications enabled
-    // for current league managers). After the control message exists, every member
-    // owns the preference through the role toggle and restarts never re-enable it.
-    const role = await guild.roles.fetch(LIVETICKER_NOTIFICATION_ROLE_ID).catch(() => null);
-    if (role) {
-      const seeded = await seedCurrentManagers(guild, role);
-      console.log(`🔔 Liveticker notification migration: added=${seeded.added}, failed=${seeded.failed}`);
-    } else {
-      console.warn(`⚠️ Liveticker notification role ${LIVETICKER_NOTIFICATION_ROLE_ID} not found.`);
+    const controls = await findControlMessages(channel, client.user?.id);
+    const sorted = controls.sort((a, b) => b.createdTimestamp - a.createdTimestamp);
+    const keep = sorted[0] || null;
+
+    for (const duplicate of sorted.slice(1)) {
+      await duplicate.delete().catch(() => null);
     }
 
-    await channel.send({ embeds: [controlEmbed()], components: [buttonRow()] }).catch(error => {
+    const role = await guild.roles.fetch(LIVETICKER_NOTIFICATION_ROLE_ID).catch(() => null);
+    let seededRoleId = keep && messageSeededForRole(keep, LIVETICKER_NOTIFICATION_ROLE_ID)
+      ? LIVETICKER_NOTIFICATION_ROLE_ID
+      : null;
+
+    if (!seededRoleId && role?.editable) {
+      const seeded = await seedCurrentManagers(guild, role);
+      if (seeded.attempted) {
+        seededRoleId = role.id;
+        console.log(`🔔 Liveticker notification migration: added=${seeded.added}, failed=${seeded.failed}`);
+      }
+    } else if (!role) {
+      console.warn(`⚠️ Liveticker notification role ${LIVETICKER_NOTIFICATION_ROLE_ID} not found.`);
+    } else if (!role.editable && !seededRoleId) {
+      console.warn(`⚠️ Liveticker notification role ${role.id} is not editable. Move the KBB bot role above it.`);
+    }
+
+    if (keep) {
+      await keep.edit({ embeds: [controlEmbed({ seededRoleId })], components: [buttonRow()] }).catch(error => {
+        console.warn(`⚠️ Could not refresh liveticker notification control: ${error?.message || error}`);
+      });
+      console.log(`🔔 Liveticker notification control restored in channel ${LIVETICKER_CHANNEL_ID}.`);
+      continue;
+    }
+
+    await channel.send({
+      embeds: [controlEmbed({ seededRoleId })],
+      components: [buttonRow()],
+    }).catch(error => {
       console.error(`❌ Could not create liveticker notification control: ${error?.message || error}`);
     });
   }
 }
 
 export async function handleLivetickerNotificationButton(interaction) {
-  if (!interaction.isButton?.() || interaction.customId !== LIVETICKER_NOTIFICATION_BUTTON_ID) return false;
+  if (!interaction.isButton?.() || !String(interaction.customId || "").startsWith("kbb:liveticker-notifications:toggle:")) return false;
 
   if (!interaction.guild) {
     await interaction.reply({ content: "❌ Diese Einstellung ist nur auf dem Server verfügbar.", ephemeral: true });
@@ -233,7 +291,7 @@ export async function handleLivetickerNotificationButton(interaction) {
     return true;
   }
   if (!role) {
-    await interaction.editReply("❌ Die Liveticker-Benachrichtigungsrolle wurde nicht gefunden.");
+    await interaction.editReply(`❌ Die Liveticker-Benachrichtigungsrolle \`${LIVETICKER_NOTIFICATION_ROLE_ID}\` wurde nicht gefunden.`);
     return true;
   }
   if (!role.editable) {
