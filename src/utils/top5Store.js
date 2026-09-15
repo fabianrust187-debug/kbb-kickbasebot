@@ -39,6 +39,9 @@ function getOrCreateRound(data, guildId) {
       id: `top5-${guildId}-${Date.now()}`,
       createdAt: new Date().toISOString(),
       completedAt: null,
+      closedAt: null,
+      closedBy: null,
+      closeReason: null,
       submissions: {},
     };
   }
@@ -130,6 +133,15 @@ export function addTop5Submission(
 
   const data = read();
   const round = getOrCreateRound(data, guildId);
+
+  if (round.closedAt) {
+    return {
+      ok: false,
+      code: "ROUND_CLOSED",
+      error: "Diese Top-5-Runde ist bereits abgeschlossen.",
+      round,
+    };
+  }
 
   if (round.submissions[user.id]) {
     return {
@@ -251,6 +263,27 @@ export function restoreTop5Submissions(guildId, entries = [], target = DEFAULT_T
   };
 }
 
+export function closeTop5Round(guildId, actor = null, reason = "complete") {
+  if (!guildId) return { ok: false, error: "Missing guild." };
+
+  const data = read();
+  const round = data[guildId]?.activeRound || null;
+  if (!round) return { ok: false, error: "Keine aktive Top-5-Runde gefunden." };
+
+  if (round.closedAt) {
+    return { ok: true, alreadyClosed: true, round };
+  }
+
+  const now = new Date().toISOString();
+  round.completedAt = round.completedAt || now;
+  round.closedAt = now;
+  round.closedBy = actor?.id || null;
+  round.closeReason = reason || "complete";
+
+  if (!write(data)) return { ok: false, error: "Top-5-Runde konnte nicht geschlossen werden." };
+  return { ok: true, alreadyClosed: false, round };
+}
+
 export function resetTop5Round(guildId, actor = null) {
   if (!guildId) return { ok: false, error: "Missing guild." };
 
@@ -273,6 +306,9 @@ export function resetTop5Round(guildId, actor = null) {
     id: `top5-${guildId}-${Date.now()}`,
     createdAt: new Date().toISOString(),
     completedAt: null,
+    closedAt: null,
+    closedBy: null,
+    closeReason: null,
     submissions: {},
   };
 
