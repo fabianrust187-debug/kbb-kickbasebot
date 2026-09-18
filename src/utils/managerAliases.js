@@ -9,6 +9,7 @@ const DIRECT_ALIASES = new Map([
 const MANAGER_NAME_ALIASES = new Map([
   ["josephinerst", "josephine"],
   ["sebastian", "flyingbee"],
+  ["jakob1706", "lasoggultra"],
 ]);
 
 export function normalizeManagerKey(value) {
