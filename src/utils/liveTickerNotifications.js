@@ -47,7 +47,7 @@ function controlEmbed({ seededRoleId = null } = {}) {
       `**Benachrichtigungsrolle:** <@&${LIVETICKER_NOTIFICATION_ROLE_ID}>`,
       "",
       "🔔 **Rolle aktiv:** Du wirst bei deinen Spielern bzw. Transfers markiert.",
-      "🔕 **Rolle aus:** Die Meldung bleibt sichtbar, du erhältst aber keinen Ping vom Bot.",
+      "🔕 **Rolle aus:** Du bleibst als Manager anklickbar verlinkt, erhältst aber keinen Ping vom Bot.",
       "",
       "Drücke den Button erneut, um deinen aktuellen Status jederzeit umzuschalten.",
     ].join("\n"),
@@ -157,34 +157,6 @@ export async function getLivetickerNotificationEnabledUserIds(guild, userIds) {
   return enabled;
 }
 
-function escapePlainMentionName(value) {
-  return String(value || "Manager")
-    .replace(/\\/g, "\\\\")
-    .replace(/([*_~`>|])/g, "\\$1")
-    .replace(/@/g, "＠");
-}
-
-async function suppressDisabledMentionMarkup(guild, embeds, disabledUserIds) {
-  if (!Array.isArray(embeds) || !disabledUserIds.length) return embeds;
-
-  const replacements = new Map();
-  await Promise.all(disabledUserIds.map(async userId => {
-    const member = await fetchMember(guild, userId);
-    replacements.set(userId, `@${escapePlainMentionName(member?.displayName || member?.user?.username || "Manager")}`);
-  }));
-
-  return embeds.map(embed => {
-    const data = typeof embed?.toJSON === "function" ? embed.toJSON() : { ...embed };
-    let description = data.description;
-    if (typeof description === "string") {
-      for (const [userId, replacement] of replacements.entries()) {
-        description = description.replaceAll(`<@${userId}>`, replacement).replaceAll(`<@!${userId}>`, replacement);
-      }
-    }
-    return { ...data, ...(typeof description === "string" ? { description } : {}) };
-  });
-}
-
 export async function installLivetickerNotificationSendGuard(client) {
   for (const guild of client.guilds.cache.values()) {
     const channel = await guild.channels.fetch(LIVETICKER_CHANNEL_ID).catch(() => null);
@@ -201,12 +173,12 @@ export async function installLivetickerNotificationSendGuard(client) {
       if (!requested.length) return originalSend(payload);
 
       const enabled = await getLivetickerNotificationEnabledUserIds(guild, requested);
-      const disabled = requested.filter(userId => !enabled.has(userId));
-      const embeds = await suppressDisabledMentionMarkup(guild, payload?.embeds, disabled);
 
+      // Keep <@userId> markup inside embeds so the manager always remains
+      // clickable. The notification role only controls whether Discord is
+      // allowed to generate an actual ping for that mention.
       return originalSend({
         ...payload,
-        ...(embeds ? { embeds } : {}),
         allowedMentions: {
           ...(payload.allowedMentions || {}),
           users: requested.filter(userId => enabled.has(userId)),
