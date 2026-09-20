@@ -134,7 +134,7 @@ export async function runKbbHelp(interaction) {
       `**Feature-Test Channel:** <#${DEFAULT_TEST_CHANNEL_ID}>`,
       "Im Liveticker erscheinen automatisch Kickbase-Transfers sowie Bundesliga-Tore, Vorlagen, rote/gelb-rote Karten und ausdrücklich verletzungsbedingte Auswechslungen.",
       "Transferdaten werden ungefähr jede Minute, Bundesliga-Livedaten ungefähr alle 30 Sekunden geprüft.",
-      "Über den Button **Benachrichtigungen an / aus** im Liveticker kann jedes Mitglied die Benachrichtigungsrolle selbst umschalten. Ohne Rolle bleiben die Feed-Meldungen sichtbar, der Bot pingt den Manager aber nicht.",
+      "Über den Button **Benachrichtigungen an / aus** im Liveticker kann jedes Mitglied die Benachrichtigungsrolle selbst umschalten. Ohne Rolle bleibt der Manager in der Meldung weiterhin als anklickbare Discord-Mention verlinkt, erhält aber keinen Ping.",
       "Neue Tore werden kurz gesammelt und Informationen aus ESPN Scoring-Plays, Key-Events, Matchdetails und Commentary zusammengeführt, damit Spielstand und Vorlagengeber möglichst vollständig in einer einzigen Meldung erscheinen.",
       "Die Besitzerzuordnung ermittelt die Liga-Manager über Overview/Ranking und lädt anschließend deren vollständige Kickbase-Kader; doppelte Live-/Kaderdatensätze desselben Besitzers werden dabei nicht mehr als Mehrdeutigkeit behandelt.",
       "Nach Restart/Deploy werden bereits vorhandene Ereignisse des laufenden Spiels als Ausgangsstand übernommen und nicht erneut nachgepostet.",
