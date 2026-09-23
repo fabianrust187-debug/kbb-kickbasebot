@@ -1,16 +1,13 @@
 import { formatMarketValue, resolveKickbasePlayerMarketValue } from "./kickbaseApi.js";
 import { isTop5DeadlinePassed } from "./top5Deadline.js";
-import { addTop5Submission, getTop5SubmissionForUser, sanitizePlayerName } from "./top5Store.js";
+import {
+  addTop5Submission,
+  getTop5Round,
+  getTop5SubmissionForUser,
+  sanitizePlayerName,
+} from "./top5Store.js";
 
 export async function submitTop5WithMarketValue(guildId, user, inputName, target) {
-  if (isTop5DeadlinePassed(guildId)) {
-    return {
-      ok: false,
-      code: "DEADLINE_PASSED",
-      error: "Die Top-5-Abgabefrist für diese Runde ist beendet. Die nächste reguläre Runde startet Freitag um 20:00 Uhr oder wird bei einer englischen Woche manuell durch die Ligaleitung gestartet.",
-    };
-  }
-
   const existing = getTop5SubmissionForUser(guildId, user?.id);
   if (existing) {
     return {
@@ -19,6 +16,20 @@ export async function submitTop5WithMarketValue(guildId, user, inputName, target
       submission: existing,
     };
   }
+
+  const round = getTop5Round(guildId);
+  if (round?.closedAt) {
+    return {
+      ok: false,
+      code: "ROUND_CLOSED",
+      error: "Diese Top-5-Runde ist bereits endgültig abgeschlossen. Die nächste Runde startet regulär Freitag um 20:00 Uhr.",
+    };
+  }
+
+  // Missing managers may still catch up after Tuesday 22:00. Their submission
+  // remains late for the deadline evaluation, so an already imposed penalty is
+  // not undone by submitting afterwards.
+  const late = isTop5DeadlinePassed(guildId);
 
   const submittedPlayerName = sanitizePlayerName(inputName);
   const lookup = await resolveKickbasePlayerMarketValue(submittedPlayerName);
@@ -42,10 +53,12 @@ export async function submitTop5WithMarketValue(guildId, user, inputName, target
         source: lookup.source,
         competitionId: lookup.competitionId,
         leagueId: lookup.leagueId,
+        late,
       }
     : {
         submittedPlayerName,
         source: lookup.code === "NOT_CONFIGURED" ? "not-configured" : "api-unavailable",
+        late,
       };
 
   const result = addTop5Submission(
@@ -59,6 +72,7 @@ export async function submitTop5WithMarketValue(guildId, user, inputName, target
 
   return {
     ...result,
+    late,
     lookup,
     marketValueAvailable: result.ok && result.submission.marketValue !== null,
   };
@@ -66,7 +80,8 @@ export async function submitTop5WithMarketValue(guildId, user, inputName, target
 
 export function formatTop5SubmissionLine(userId, submission) {
   const marketValue = formatMarketValue(submission?.marketValue);
-  return `Manager: <@${userId}> hat **${submission.playerName}** abgegeben. • MW: **${marketValue}**`;
+  const lateLabel = submission?.submittedLate ? " • ⚠️ **verspätet nachgereicht**" : "";
+  return `Manager: <@${userId}> hat **${submission.playerName}** abgegeben. • MW: **${marketValue}**${lateLabel}`;
 }
 
 export function formatTop5Entry(entry) {
