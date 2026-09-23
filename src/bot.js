@@ -13,6 +13,7 @@ import { runKickbaseFeedTest } from "./commands/kbbFeedTest.js";
 import { runKickbaseOwnerTest } from "./commands/kbbOwnerTest.js";
 import { runTop5Start } from "./commands/kbbTop5Start.js";
 import { startTop5DeadlineScheduler } from "./utils/top5Deadline.js";
+import { startTop5LateSubmissionScheduler } from "./utils/top5LateSubmissionScheduler.js";
 import { startKickbaseTransferFeedScheduler } from "./utils/kickbaseTransferFeedScheduler.js";
 import { handleTop5Button, handleTop5ButtonModal } from "./utils/top5ButtonHandler.js";
 import { runTop5ResetWithUi } from "./utils/top5ResetHandler.js";
@@ -44,7 +45,9 @@ client.once(Events.ClientReady, async () => {
   }
 
   startTop5DeadlineScheduler(client);
+  startTop5LateSubmissionScheduler(client);
   console.log("⏰ Top-5 deadline scheduler active: Tuesday 22:00 Europe/Berlin");
+  console.log("⚠️ Top-5 late-submission recovery active until the round is closed/new Friday round starts.");
 
   // One shared production channel for transfers + Bundesliga live events.
   // Set before dynamically importing the livefeed module because that module reads
