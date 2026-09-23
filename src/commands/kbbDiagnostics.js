@@ -114,7 +114,7 @@ export async function runKbbHelp(interaction) {
       "• `/kbb rules` — Regelwerk anzeigen",
       "• `/kbb league` — Liga-Infos anzeigen",
       "• `/kbb name` — Kickbase-Namen in einem privaten Fenster eintragen",
-      "• `/kbb top5` — private Top-5-Abgabe starten",
+      "• `/kbb top5` — private Top-5-Abgabe starten bzw. eine versäumte Abgabe nachreichen",
       "• `/kbb top5-status` — Abgabestand inklusive Marktwert anzeigen",
       "• `/kbb top5-history` — gespeicherte Top-5-Abgaben und Marktwerte abrufen",
       "• `/kbb top5-missing` — Fristprüfung manuell posten *(Admin)*",
@@ -141,8 +141,8 @@ export async function runKbbHelp(interaction) {
       "**Kartenscoring:** Rot **-75**, Gelb-Rot **-50** Kickbase-Punkte.",
       "**Regulärer Rundenstart:** Freitag um **20:00 Uhr (Europe/Berlin)**.",
       "**Abgabefrist:** Dienstag um **22:00 Uhr (Europe/Berlin)**.",
-      "Sobald **14/14 Abgaben** im System erfasst sind, wird die Top-5-Runde automatisch endgültig geschlossen. Bereits verhängte Strafen für verspätete Abgaben bleiben dabei bestehen.",
-      "Nach der Dienstagsfrist bleibt der Abgabe-Button weg, bis die nächste Runde am Freitag startet.",
+      "Fehlende Manager dürfen ihre Abgabe nach Fristablauf weiterhin nachreichen. Die Abgabe wird als verspätet gewertet und eine bereits verhängte Strafe bleibt bestehen.",
+      "Solange mindestens ein Manager noch fehlt, bleibt bzw. erscheint der Abgabe-Button auch nach der Frist. Sobald **14/14 Abgaben** erfasst sind, wird die Runde endgültig geschlossen.",
     ].join("\n"),
   });
 
