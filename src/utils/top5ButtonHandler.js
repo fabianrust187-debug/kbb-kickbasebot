@@ -8,7 +8,7 @@ import { buildKbbEmbed } from "./embeds.js";
 import { getGuildSettings } from "./guildSettings.js";
 import { formatMarketValue } from "./kickbaseApi.js";
 import { addManager, getManagers } from "./managerStore.js";
-import { isTop5DeadlinePassed } from "./top5Deadline.js";
+import { finalizeTop5RoundIfComplete, isTop5DeadlinePassed } from "./top5Deadline.js";
 import { TOP5_BUTTON_PREFIX } from "./top5Button.js";
 import {
   formatTop5SubmissionLine,
@@ -92,17 +92,17 @@ export async function handleTop5Button(interaction) {
     return true;
   }
 
+  if (activeRound.closedAt) {
+    await interaction.reply({ content: "🔒 Diese Top-5-Runde ist bereits endgültig abgeschlossen.", ephemeral: true });
+    return true;
+  }
+
   if (activeRound.id !== clickedRoundId) {
     const stillCurrent = await buttonBelongsToLatestVisibleRound(interaction);
     if (!stillCurrent) {
       await interaction.reply({ content: "🔄 Dieser Button gehört zu einer bereits beendeten Top-5-Runde. Bitte nutze den aktuellen Button im Channel.", ephemeral: true });
       return true;
     }
-  }
-
-  if (isTop5DeadlinePassed(interaction.guildId)) {
-    await interaction.reply({ content: "⏰ Die Top-5-Abgabefrist für diese Runde ist beendet. Die nächste reguläre Runde startet Freitag um 20:00 Uhr.", ephemeral: true });
-    return true;
   }
 
   const existing = getTop5SubmissionForUser(interaction.guildId, interaction.user.id);
@@ -129,9 +129,10 @@ export async function handleTop5Button(interaction) {
     }
   }
 
+  const late = isTop5DeadlinePassed(interaction.guildId);
   const modal = new ModalBuilder()
     .setCustomId(`${TOP5_BUTTON_MODAL_PREFIX}${interaction.guildId}:${interaction.user.id}:${activeRound.id}`)
-    .setTitle("Top-5-Spieler abgeben");
+    .setTitle(late ? "Top-5 verspätet nachreichen" : "Top-5-Spieler abgeben");
 
   const input = new TextInputBuilder()
     .setCustomId("player_name")
@@ -164,8 +165,8 @@ export async function handleTop5ButtonModal(interaction) {
     return true;
   }
 
-  if (isTop5DeadlinePassed(interaction.guildId)) {
-    await interaction.reply({ content: "⏰ Die Abgabefrist ist inzwischen abgelaufen. Diese Abgabe wurde nicht mehr angenommen.", ephemeral: true });
+  if (activeRound.closedAt) {
+    await interaction.reply({ content: "🔒 Diese Top-5-Runde ist bereits endgültig abgeschlossen.", ephemeral: true });
     return true;
   }
 
@@ -192,20 +193,30 @@ export async function handleTop5ButtonModal(interaction) {
   }
 
   await interaction.channel?.send({
-    content: formatTop5SubmissionLine(interaction.user.id, result.submission),
+    content: `${formatTop5SubmissionLine(interaction.user.id, result.submission)}${result.late ? " • ⚠️ **verspätet nachgereicht**" : ""}`,
     allowedMentions: { users: [interaction.user.id], parse: [] },
   }).catch(() => null);
 
   if (result.complete) {
-    await interaction.channel?.send({ embeds: [buildTop5SummaryEmbed(result.submissions)] }).catch(() => null);
+    const finalized = await finalizeTop5RoundIfComplete(interaction.guild, {
+      source: result.late ? "late-button-submission" : "button-submission",
+    }).catch(() => null);
+
+    if (!finalized?.closed) {
+      await interaction.channel?.send({ embeds: [buildTop5SummaryEmbed(result.submissions)] }).catch(() => null);
+    }
   }
 
   const apiWarning = result.lookup?.ok
     ? ""
     : "\n⚠️ Kickbase war gerade nicht erreichbar. Die Abgabe wurde trotzdem gespeichert; der Marktwert steht daher auf **nicht verfügbar**.";
 
+  const lateWarning = result.late
+    ? "\n⚠️ **Die Abgabe ist verspätet. Eine bereits verhängte Strafe bleibt bestehen.**"
+    : "";
+
   await interaction.editReply({
-    content: `✅ Abgabe gespeichert: **${result.submission.playerName}** • MW: **${formatMarketValue(result.submission.marketValue)}** (${result.count}/${result.target})${apiWarning}`,
+    content: `✅ Abgabe gespeichert: **${result.submission.playerName}** • MW: **${formatMarketValue(result.submission.marketValue)}** (${result.count}/${result.target})${lateWarning}${apiWarning}`,
   });
   return true;
 }
