@@ -139,7 +139,7 @@ export async function runKbbHelp(interaction) {
       "Die Besitzerzuordnung ermittelt die Liga-Manager über Overview/Ranking und lädt anschließend deren vollständige Kickbase-Kader; doppelte Live-/Kaderdatensätze desselben Besitzers werden dabei nicht mehr als Mehrdeutigkeit behandelt.",
       "Nach Restart/Deploy werden bereits vorhandene Ereignisse des laufenden Spiels als Ausgangsstand übernommen und nicht erneut nachgepostet.",
       "**Kartenscoring:** Rot **-75**, Gelb-Rot **-50** Kickbase-Punkte.",
-      "**Regulärer Rundenstart:** Freitag um **20:00 Uhr (Europe/Berlin)**.",
+      "**Regulärer Rundenstart:** Freitag um **20:00 Uhr (Europe/Berlin)** – aber nur, wenn an diesem Wochenende ein Bundesliga-Spieltag stattfindet. Länderspielpausen werden automatisch übersprungen.",
       "**Abgabefrist:** Dienstag um **22:00 Uhr (Europe/Berlin)**.",
       "Fehlende Manager dürfen ihre Abgabe nach Fristablauf weiterhin nachreichen. Die Abgabe wird als verspätet gewertet und eine bereits verhängte Strafe bleibt bestehen.",
       "Solange mindestens ein Manager noch fehlt, bleibt bzw. erscheint der Abgabe-Button auch nach der Frist. Sobald **14/14 Abgaben** erfasst sind, wird die Runde endgültig geschlossen.",
