@@ -1,5 +1,6 @@
 import { getGuildSettings } from "./guildSettings.js";
 import { cleanupTop5SubmitButtons, ensureTop5SubmitButton } from "./top5Button.js";
+import { shouldStartScheduledTop5Round } from "./top5ScheduleGate.js";
 import { resetTop5Round } from "./top5Store.js";
 
 const DEFAULT_TOP5_CHANNEL_ID = process.env.TOP5_CHANNEL_ID || "1522249357179617331";
@@ -13,6 +14,30 @@ export async function startTop5Round(guild, actor = null, { source = "manual", c
     return { ok: false, error: `Top-5-Channel ${resolvedChannelId} nicht gefunden oder nicht beschreibbar.` };
   }
 
+  if (source === "scheduled") {
+    const gate = await shouldStartScheduledTop5Round();
+    if (!gate.ok) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: "schedule-check-failed",
+        error: gate.error || "Bundesliga-Spielplan konnte nicht geprüft werden.",
+      };
+    }
+
+    if (!gate.shouldStart) {
+      console.log(`⏸️ Top-5 auto-start skipped for ${guild.name}: no Bundesliga matchday (${gate.fridayKey || "unknown Friday"}).`);
+      return {
+        ok: true,
+        skipped: true,
+        reason: gate.reason || "no-bundesliga-fixtures",
+        fridayKey: gate.fridayKey || null,
+        fixtureCount: gate.fixtureCount || 0,
+        channelId: resolvedChannelId,
+      };
+    }
+  }
+
   await cleanupTop5SubmitButtons(guild, { channelId: resolvedChannelId }).catch(() => null);
 
   const reset = resetTop5Round(guild.id, actor || guild.client.user);
@@ -21,7 +46,7 @@ export async function startTop5Round(guild, actor = null, { source = "manual", c
   }
 
   const sourceLine = source === "scheduled"
-    ? "📅 **Regulärer Wochenstart: Freitag, 20:00 Uhr.**"
+    ? "📅 **Bundesliga-Spieltag erkannt – regulärer Start: Freitag, 20:00 Uhr.**"
     : "⚡ **Runde wurde von der Ligaleitung manuell gestartet.**";
 
   const marker = await channel.send({
