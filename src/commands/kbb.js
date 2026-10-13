@@ -390,13 +390,17 @@ async function runTop5Correct(interaction) {
   if (channel?.isTextBased?.() && channel.messages?.fetch) {
     const history = await fetchTop5ChannelHistory(channel).catch(() => []);
     const botId = interaction.guild.client.user?.id;
-    const originalMessage = [...history]
+    const botMessages = history.filter(message => message.author?.id === botId);
+    const lastBoundaryIndex = botMessages.reduce(
+      (last, message, index) => String(message.content || "").includes("Neue Top-5-Runde gestartet") ? index : last,
+      -1,
+    );
+    const currentRoundMessages = lastBoundaryIndex >= 0
+      ? botMessages.slice(lastBoundaryIndex + 1)
+      : botMessages;
+    const originalMessage = [...currentRoundMessages]
       .reverse()
-      .find(message => {
-        if (message.author?.id !== botId) return false;
-        const parsed = parseTop5SubmissionMessage(message);
-        return parsed?.userId === manager.id;
-      });
+      .find(message => parseTop5SubmissionMessage(message)?.userId === manager.id);
 
     if (originalMessage?.edit) {
       durable = await originalMessage.edit({
