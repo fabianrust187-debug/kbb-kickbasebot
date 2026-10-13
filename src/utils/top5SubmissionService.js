@@ -2,6 +2,7 @@ import { formatMarketValue, resolveKickbasePlayerMarketValue } from "./kickbaseA
 import { isTop5DeadlinePassed } from "./top5Deadline.js";
 import {
   addTop5Submission,
+  correctTop5Submission,
   getTop5Round,
   getTop5SubmissionForUser,
   sanitizePlayerName,
@@ -73,6 +74,62 @@ export async function submitTop5WithMarketValue(guildId, user, inputName, target
   return {
     ...result,
     late,
+    lookup,
+    marketValueAvailable: result.ok && result.submission.marketValue !== null,
+  };
+}
+
+export async function correctTop5WithMarketValue(guildId, user, inputName, actor) {
+  const existing = getTop5SubmissionForUser(guildId, user?.id);
+  if (!existing) {
+    return {
+      ok: false,
+      code: "NOT_FOUND",
+      error: "Für diesen Manager gibt es in der aktuellen Runde keine Abgabe.",
+    };
+  }
+
+  const submittedPlayerName = sanitizePlayerName(inputName);
+  const lookup = await resolveKickbasePlayerMarketValue(submittedPlayerName);
+
+  if (!lookup.ok && ["AMBIGUOUS", "NOT_FOUND"].includes(lookup.code)) {
+    return {
+      ok: false,
+      lookupError: true,
+      lookup,
+      error: lookup.error,
+    };
+  }
+
+  const resolvedName = lookup.ok ? lookup.playerName : submittedPlayerName;
+  const marketValue = lookup.ok ? lookup.marketValue : null;
+  const metadata = lookup.ok
+    ? {
+        submittedPlayerName,
+        playerId: lookup.playerId,
+        fetchedAt: lookup.fetchedAt,
+        source: `${lookup.source || "kickbase"}-admin-correction`,
+        competitionId: lookup.competitionId,
+        leagueId: lookup.leagueId,
+      }
+    : {
+        submittedPlayerName,
+        source: lookup.code === "NOT_CONFIGURED"
+          ? "not-configured-admin-correction"
+          : "api-unavailable-admin-correction",
+      };
+
+  const result = correctTop5Submission(
+    guildId,
+    user.id,
+    resolvedName,
+    marketValue,
+    metadata,
+    actor,
+  );
+
+  return {
+    ...result,
     lookup,
     marketValueAvailable: result.ok && result.submission.marketValue !== null,
   };
