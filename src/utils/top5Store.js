@@ -263,6 +263,67 @@ export function restoreTop5Submissions(guildId, entries = [], target = DEFAULT_T
   };
 }
 
+export function correctTop5Submission(
+  guildId,
+  userId,
+  playerName,
+  marketValue = null,
+  metadata = {},
+  actor = null,
+) {
+  if (!guildId || !userId) {
+    return { ok: false, error: "Missing guild or user." };
+  }
+
+  const cleanName = sanitizePlayerName(playerName);
+  if (!cleanName || cleanName.length < 2) {
+    return { ok: false, error: "Bitte einen gültigen Spielernamen eingeben." };
+  }
+
+  const data = read();
+  const round = data[guildId]?.activeRound || null;
+  if (!round) return { ok: false, error: "Keine aktive Top-5-Runde gefunden." };
+
+  const existing = round.submissions?.[userId] || null;
+  if (!existing) {
+    return { ok: false, code: "NOT_FOUND", error: "Für diesen Manager gibt es in der aktuellen Runde keine Abgabe." };
+  }
+
+  const correctedAt = new Date().toISOString();
+  const correction = {
+    fromPlayerName: existing.playerName,
+    toPlayerName: cleanName,
+    correctedAt,
+    correctedBy: actor?.id || null,
+  };
+
+  round.submissions[userId] = {
+    ...existing,
+    playerName: cleanName,
+    submittedPlayerName: sanitizePlayerName(metadata.submittedPlayerName || cleanName),
+    kickbasePlayerId: metadata.playerId ? String(metadata.playerId) : null,
+    marketValue: validMarketValue(marketValue),
+    marketValueFetchedAt: metadata.fetchedAt ? validIso(metadata.fetchedAt) : null,
+    marketValueSource: metadata.source || null,
+    kickbaseCompetitionId: metadata.competitionId ? String(metadata.competitionId) : null,
+    kickbaseLeagueId: metadata.leagueId ? String(metadata.leagueId) : null,
+    correctedAt,
+    correctedBy: actor?.id || null,
+    corrections: [...(Array.isArray(existing.corrections) ? existing.corrections : []), correction].slice(-10),
+  };
+
+  if (!write(data)) {
+    return { ok: false, error: "Top-5-Abgabe konnte nicht korrigiert werden." };
+  }
+
+  return {
+    ok: true,
+    previousSubmission: existing,
+    submission: round.submissions[userId],
+    round,
+  };
+}
+
 export function closeTop5Round(guildId, actor = null, reason = "complete") {
   if (!guildId) return { ok: false, error: "Missing guild." };
 
