@@ -13,7 +13,12 @@ import { addManager, getManagers, removeManager } from "../utils/managerStore.js
 import { formatMarketValue } from "../utils/kickbaseApi.js";
 import { publishMissingTop5 } from "../utils/top5Deadline.js";
 import { getDurableTop5History } from "../utils/top5History.js";
-import { formatTop5SubmissionLine, submitTop5WithMarketValue } from "../utils/top5SubmissionService.js";
+import {
+  correctTop5WithMarketValue,
+  formatTop5SubmissionLine,
+  submitTop5WithMarketValue,
+} from "../utils/top5SubmissionService.js";
+import { fetchTop5ChannelHistory, parseTop5SubmissionMessage } from "../utils/top5Recovery.js";
 import {
   getTop5SubmissionForUser,
   getTop5Submissions,
@@ -336,6 +341,117 @@ async function runTop5Missing(interaction) {
   });
 }
 
+async function runTop5Correct(interaction) {
+  if (!interaction.guildId || !interaction.guild) {
+    return interaction.reply({ embeds: [buildErrorEmbed("Nur auf einem Server nutzbar.")], ephemeral: true });
+  }
+  if (!hasManageServerPermission(interaction)) {
+    return interaction.reply({ embeds: [buildErrorEmbed("Du brauchst Manage Server oder Administrator.")], ephemeral: true });
+  }
+
+  const manager = interaction.options.getUser("manager", true);
+  const inputName = interaction.options.getString("spieler", true);
+  const previous = getTop5SubmissionForUser(interaction.guildId, manager.id);
+  if (!previous) {
+    return interaction.reply({
+      embeds: [buildErrorEmbed("Für diesen Manager gibt es in der aktuellen Runde keine Abgabe.")],
+      ephemeral: true,
+    });
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  const result = await correctTop5WithMarketValue(
+    interaction.guildId,
+    manager,
+    inputName,
+    interaction.user,
+  );
+
+  if (!result.ok) {
+    if (result.lookupError) {
+      const suggestions = result.lookup?.suggestions?.length
+        ? `\n\nMögliche Treffer:\n${result.lookup.suggestions.map(name => `• **${name}**`).join("\n")}`
+        : "";
+      return interaction.editReply({
+        embeds: [buildErrorEmbed(`${result.error || "Spieler konnte bei Kickbase nicht eindeutig gefunden werden."}${suggestions}`)],
+      });
+    }
+
+    return interaction.editReply({
+      embeds: [buildErrorEmbed(result.error || "Top-5-Abgabe konnte nicht korrigiert werden.")],
+    });
+  }
+
+  const channelId = getTop5ChannelId(interaction.guildId);
+  const channel = await interaction.guild.channels.fetch(channelId).catch(() => null);
+  let durable = false;
+  let persistenceMode = "keine Discord-Sicherung";
+
+  if (channel?.isTextBased?.() && channel.messages?.fetch) {
+    const history = await fetchTop5ChannelHistory(channel).catch(() => []);
+    const botId = interaction.guild.client.user?.id;
+    const originalMessage = [...history]
+      .reverse()
+      .find(message => {
+        if (message.author?.id !== botId) return false;
+        const parsed = parseTop5SubmissionMessage(message);
+        return parsed?.userId === manager.id;
+      });
+
+    if (originalMessage?.edit) {
+      durable = await originalMessage.edit({
+        content: formatTop5SubmissionLine(manager.id, result.submission),
+        allowedMentions: { users: [manager.id], parse: [] },
+      }).then(() => true).catch(() => false);
+
+      if (durable) persistenceMode = "ursprüngliche Abgabe-Nachricht aktualisiert";
+    }
+
+    if (!durable) {
+      const fallbackMessage = await channel.send({
+        content: formatTop5SubmissionLine(manager.id, result.submission),
+        allowedMentions: { users: [manager.id], parse: [] },
+      }).catch(() => null);
+
+      durable = !!fallbackMessage;
+      if (durable) persistenceMode = "korrigierte Recovery-Nachricht ergänzt";
+    }
+
+    if (durable) {
+      await channel.send({
+        content: [
+          "🛠️ **Top-5-Korrektur durch Admin**",
+          `<@${manager.id}>: **${escapeDiscordText(previous.playerName)}** → **${escapeDiscordText(result.submission.playerName)}**`,
+          `Korrigiert von <@${interaction.user.id}>.`,
+        ].join("\n"),
+        allowedMentions: { users: [manager.id, interaction.user.id], parse: [] },
+      }).catch(() => null);
+    }
+  }
+
+  const apiWarning = result.lookup?.ok
+    ? ""
+    : "\n⚠️ Kickbase war beim Korrigieren nicht erreichbar; der neue Spieler wurde gespeichert, der Marktwert ist deshalb **nicht verfügbar**.";
+  const durabilityWarning = durable
+    ? ""
+    : "\n⚠️ Die laufenden Bot-Daten wurden korrigiert, aber die Discord-Recovery konnte nicht aktualisiert werden. Vor einem Neustart bitte den Top-5-Channel prüfen.";
+
+  return interaction.editReply({
+    embeds: [buildSuccessEmbed(
+      "✅ Top-5-Abgabe korrigiert",
+      [
+        `Manager: ${manager}`,
+        `Vorher: **${escapeDiscordText(previous.playerName)}**`,
+        `Jetzt: **${escapeDiscordText(result.submission.playerName)}**`,
+        `Marktwert: **${formatMarketValue(result.submission.marketValue)}**`,
+        `Sicherung: **${persistenceMode}**`,
+        apiWarning,
+        durabilityWarning,
+      ].filter(Boolean).join("\n"),
+    )],
+  });
+}
+
 async function runTop5Reset(interaction) {
   if (!interaction.guildId) return interaction.reply({ embeds: [buildErrorEmbed("Nur auf einem Server nutzbar.")], ephemeral: true });
   if (!hasManageServerPermission(interaction)) return interaction.reply({ embeds: [buildErrorEmbed("Du brauchst Manage Server oder Administrator.")], ephemeral: true });
@@ -555,6 +671,19 @@ export default {
         .setName("runde_abschliessen")
         .setDescription("Nach der Ausgabe direkt eine neue Top-5-Runde starten")
         .setRequired(false)))
+    .addSubcommand(sub => sub
+      .setName("top5-correct")
+      .setDescription("Top-5-Abgabe eines Managers korrigieren (Admin)")
+      .addUserOption(option => option
+        .setName("manager")
+        .setDescription("Manager mit der zu korrigierenden Abgabe")
+        .setRequired(true))
+      .addStringOption(option => option
+        .setName("spieler")
+        .setDescription("Richtiger Spielername")
+        .setMinLength(2)
+        .setMaxLength(80)
+        .setRequired(true)))
     .addSubcommand(sub => sub.setName("top5-reset").setDescription("Top-5-Runde zurücksetzen"))
     .addSubcommand(sub => sub
       .setName("manager-add")
@@ -582,6 +711,7 @@ export default {
     if (sub === "top5-status") return runTop5Status(interaction);
     if (sub === "top5-history") return runTop5History(interaction);
     if (sub === "top5-missing") return runTop5Missing(interaction);
+    if (sub === "top5-correct") return runTop5Correct(interaction);
     if (sub === "top5-reset") return runTop5Reset(interaction);
     if (sub === "manager-add") return runManagerAdd(interaction);
     if (sub === "manager-remove") return runManagerRemove(interaction);
