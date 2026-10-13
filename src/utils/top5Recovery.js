@@ -28,13 +28,20 @@ export function parseTop5SubmissionMessage(message) {
   const match = content.match(/Manager:\s*<@!?(\d+)>\s+hat\s+\*\*(.+?)\*\*\s+abgegeben\./s);
   if (!match) return null;
 
+  const originalTimeMatch = content.match(/ursprüngliche Abgabe:\s*<t:(\d+):[A-Za-z]>/i);
+  const originalCreatedAt = originalTimeMatch
+    ? new Date(Number(originalTimeMatch[1]) * 1000).toISOString()
+    : null;
+
   return {
     userId: match[1],
     userTag: null,
     playerName: match[2].trim(),
     marketValue: parseMarketValue(content),
     marketValueSource: parseMarketValue(content) !== null ? "discord-recovery" : null,
-    createdAt: message.createdAt?.toISOString?.() || new Date(message.createdTimestamp || Date.now()).toISOString(),
+    createdAt: originalCreatedAt
+      || message.createdAt?.toISOString?.()
+      || new Date(message.createdTimestamp || Date.now()).toISOString(),
     messageId: message.id,
   };
 }
@@ -103,13 +110,15 @@ export async function recoverKbbStateFromDiscord(guild, { channelId = null, targ
     .map(parseTop5SubmissionMessage)
     .filter(Boolean);
 
-  const uniqueCurrent = [];
-  const currentSeen = new Set();
+  // Keep the latest canonical submission per manager. Normal rounds still have
+  // one entry per manager, while an admin correction may add a newer fallback
+  // message if the original bot message could not be edited.
+  const currentByUser = new Map();
   for (const entry of currentEntries) {
-    if (currentSeen.has(entry.userId)) continue;
-    currentSeen.add(entry.userId);
-    uniqueCurrent.push(entry);
+    currentByUser.set(entry.userId, entry);
   }
+  const uniqueCurrent = [...currentByUser.values()]
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
 
   const restoredRound = restoreTop5Submissions(guild.id, uniqueCurrent, target);
   if (!restoredRound.ok) return restoredRound;
