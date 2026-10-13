@@ -138,7 +138,11 @@ export async function correctTop5WithMarketValue(guildId, user, inputName, actor
 export function formatTop5SubmissionLine(userId, submission) {
   const marketValue = formatMarketValue(submission?.marketValue);
   const lateLabel = submission?.submittedLate ? " • ⚠️ **verspätet nachgereicht**" : "";
-  return `Manager: <@${userId}> hat **${submission.playerName}** abgegeben. • MW: **${marketValue}**${lateLabel}`;
+  const createdAt = new Date(submission?.createdAt || 0);
+  const correctedTimeLabel = submission?.correctedAt && !Number.isNaN(createdAt.getTime())
+    ? ` • ursprüngliche Abgabe: <t:${Math.floor(createdAt.getTime() / 1000)}:f>`
+    : "";
+  return `Manager: <@${userId}> hat **${submission.playerName}** abgegeben. • MW: **${marketValue}**${lateLabel}${correctedTimeLabel}`;
 }
 
 export function formatTop5Entry(entry) {
