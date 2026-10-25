@@ -56,6 +56,15 @@ function extractMarketValue(data) {
     if (value !== null && value >= 0) return value;
   }
 
+  // Player detail payloads can be nested under a player wrapper rather
+  // than exposing "mv" directly at the root.
+  for (const key of ["player", "pl", "p", "detail", "data"]) {
+    const nested = data[key];
+    if (!nested || typeof nested !== "object") continue;
+    const value = extractMarketValue(nested);
+    if (value !== null) return value;
+  }
+
   if (Array.isArray(data.it)) {
     const value = extractMarketValue(data.it);
     if (value !== null) return value;
