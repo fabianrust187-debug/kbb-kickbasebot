@@ -207,9 +207,9 @@ export async function handleTop5ButtonModal(interaction) {
     }
   }
 
-  const apiWarning = result.lookup?.ok
+  const apiWarning = result.submission.marketValue !== null
     ? ""
-    : "\n⚠️ Kickbase war gerade nicht erreichbar. Die Abgabe wurde trotzdem gespeichert; der Marktwert steht daher auf **nicht verfügbar**.";
+    : "\n⚠️ Kickbase konnte den Marktwert nicht liefern. Die Abgabe bleibt gespeichert. Mit `/kbb top5-mw-retry` kannst du ihn später nachladen.";
 
   const lateWarning = result.late
     ? "\n⚠️ **Die Abgabe ist verspätet. Eine bereits verhängte Strafe bleibt bestehen.**"
