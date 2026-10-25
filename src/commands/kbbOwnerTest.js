@@ -26,9 +26,15 @@ export async function runKickbaseOwnerTest(interaction) {
   const snapshot = await getReliableKickbaseOwnership({ force: true });
   if (!snapshot.ok) {
     return interaction.editReply({ embeds: [buildErrorEmbed([
-      "Kickbase-Besitzerauflösung fehlgeschlagen.",
+      "Kickbase-Besitzerauflösung ist aktuell nicht vollständig. Der Liveticker wartet mit neuen Meldungen, bis die Besitzer wieder zuverlässig geladen werden.",
       "",
       `**Fehler:** ${snapshot.error || "Unbekannter Fehler"}`,
+      `**Manager erkannt:** ${snapshot.managers?.length ?? "nicht verfügbar"}`,
+      `**Manager mit Kader:** ${snapshot.managersWithRoster ?? "nicht verfügbar"}`,
+      `**Kaderspieler:** ${snapshot.squadPlayerCount ?? "nicht verfügbar"}`,
+      `**Live-Spieler:** ${snapshot.livePlayerCount ?? "nicht verfügbar"}`,
+      "",
+      "Falls die Zahlen weiterhin fehlen oder deutlich unter 14 Managern liegen: Bitte die Discloud-Logs mit Zeilen \`Kickbase owner health\` bzw. \`Kickbase squad\` prüfen. Zugangsdaten nicht teilen.",
     ].join("\n"))] });
   }
 
@@ -40,6 +46,7 @@ export async function runKickbaseOwnerTest(interaction) {
     "",
     `**Liga:** ${snapshot.leagueName} (\`${snapshot.leagueId}\`)`,
     `**Manager erkannt:** ${snapshot.managers?.length || 0}`,
+    `**Manager mit erkanntem Kader:** ${snapshot.managersWithRoster || 0}`,
     `**Kaderspieler geladen:** ${snapshot.squadPlayerCount || 0}`,
     `**Live-Spieler geladen:** ${snapshot.livePlayerCount || 0}`,
     `**Zusammengeführte Spieler:** ${snapshot.players?.length || 0}`,
