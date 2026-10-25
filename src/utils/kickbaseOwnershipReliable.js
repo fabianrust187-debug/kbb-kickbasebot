@@ -1,11 +1,14 @@
 const API_BASE = "https://api.kickbase.com/v4";
 const DEFAULT_LEAGUE_NAME = process.env.KICKBASE_LEAGUE_NAME || "187 KICKBASEBANDE";
 const REQUEST_TIMEOUT_MS = Math.max(3000, Number(process.env.KICKBASE_API_TIMEOUT_MS || 10000));
-const CACHE_MS = Math.max(30000, Number(process.env.KBB_OWNERSHIP_CACHE_MS || 60000));
+// A full league snapshot needs multiple authenticated requests; cache healthy results long enough to avoid rate limits.
+const CACHE_MS = Math.max(180000, Number(process.env.KBB_OWNERSHIP_CACHE_MS || 300000));
 
 let cachedToken = String(process.env.KICKBASE_TOKEN || "").trim() || null;
 let cachedLeagueId = String(process.env.KICKBASE_LEAGUE_ID || "").trim() || null;
 let snapshotCache = { expiresAt: 0, value: null };
+let pendingSnapshot = null;
+let pendingLogin = null;
 
 export function normalizeKickbasePlayerName(value) {
   return String(value || "")
@@ -40,18 +43,26 @@ async function fetchJson(url, options = {}) {
 }
 
 async function login() {
-  const email = String(process.env.KICKBASE_EMAIL || "").trim();
-  const password = String(process.env.KICKBASE_PASSWORD || "");
-  if (!email || !password) return null;
+  if (pendingLogin) return pendingLogin;
+  pendingLogin = (async () => {
+    const email = String(process.env.KICKBASE_EMAIL || "").trim();
+    const password = String(process.env.KICKBASE_PASSWORD || "");
+    if (!email || !password) return null;
 
-  const { response, data } = await fetchJson(`${API_BASE}/user/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ em: email, loy: false, pass: password, rep: {} }),
-  });
-  if (!response.ok || !data?.tkn) throw new Error(`Kickbase login failed (${response.status}).`);
-  cachedToken = String(data.tkn);
-  return cachedToken;
+    const { response, data } = await fetchJson(`${API_BASE}/user/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ em: email, loy: false, pass: password, rep: {} }),
+    });
+    if (!response.ok || !data?.tkn) throw new Error(`Kickbase login failed (${response.status}).`);
+    cachedToken = String(data.tkn);
+    return cachedToken;
+  })();
+  try {
+    return await pendingLogin;
+  } finally {
+    pendingLogin = null;
+  }
 }
 
 async function getToken(force = false) {
@@ -107,7 +118,8 @@ async function resolveLeagueId() {
 
 function managerEntries(data) {
   if (!data || typeof data !== "object") return [];
-  const arrays = [data.us, data.u, data.managers, data.it, data.m];
+  const arrays = [data.us, data.u, data.managers, data.users, data.it, data.m, data.results, data.items,
+    data.data?.us, data.data?.users, data.data?.managers, data.data?.it];
   return arrays.find(Array.isArray) || (Array.isArray(data) ? data : []);
 }
 
@@ -243,6 +255,8 @@ async function loadManagerDirectory(leagueId, liveManagers) {
   for (const path of [
     `/leagues/${leagueId}/overview?includeManagersAndBattles=true`,
     `/leagues/${leagueId}/ranking`,
+    `/leagues/${leagueId}/managers`,
+    `/leagues/${leagueId}/users`,
     `/leagues/${leagueId}/settings/managers`,
   ]) {
     try {
@@ -257,42 +271,59 @@ async function loadManagerDirectory(leagueId, liveManagers) {
 }
 
 async function loadManagerSquad(leagueId, manager) {
-  const paths = [
+  // Prefer the two documented read-only sources. The earlier implementation
+  // requested five URLs per manager on EVERY goal, often hitting API 429.
+  const primaryPaths = [
     `/leagues/${leagueId}/managers/${manager.managerId}/squad`,
+    `/leagues/${leagueId}/users/${manager.managerId}/teamcenter`,
+  ];
+  const fallbackPaths = [
     `/leagues/${leagueId}/managers/${manager.managerId}/players`,
     `/leagues/${leagueId}/users/${manager.managerId}/squad`,
-    `/leagues/${leagueId}/users/${manager.managerId}/teamcenter`,
     `/leagues/${leagueId}/users/${manager.managerId}/players`,
   ];
-
   const combined = new Map();
   const keyOf = player => player.playerId
     ? `id:${player.playerId}`
     : `name:${normalizeKickbasePlayerName(player.playerName)}`;
 
-  for (const path of paths) {
+  const collect = async path => {
     try {
-      const data = await apiGet(path);
-      const players = parsePlayers(data, manager);
-      if (!players.length) {
-        console.warn(`⚠️ Kickbase squad ${manager.managerName}: response from ${path} contained no recognized player list`);
-        continue;
-      }
-
-      console.log(`👥 Kickbase squad source ${manager.managerName}: ${players.length} player(s) via ${path}`);
+      const players = parsePlayers(await apiGet(path), manager);
       for (const player of players) {
         const key = keyOf(player);
-        const existing = combined.get(key) || {};
-        combined.set(key, { ...existing, ...player });
+        combined.set(key, { ...(combined.get(key) || {}), ...player });
       }
+      return players.length;
     } catch (error) {
-      console.warn(`⚠️ Kickbase ownership source failed ${path}: ${error?.message || error}`);
+      console.warn(`⚠️ Kickbase squad ${manager.managerName} ${path}: ${error?.message || error}`);
+      return 0;
+    }
+  };
+  for (const path of primaryPaths) await collect(path);
+  // Only probe less reliable variants if both documented sources were empty.
+  if (!combined.size) {
+    for (const path of fallbackPaths) {
+      if (await collect(path)) break;
     }
   }
+  console.log(`👥 Kickbase roster ${manager.managerName}: ${combined.size} player(s)`);
+  return [...combined.values()];
+}
 
-  const result = [...combined.values()];
-  console.log(`👥 Kickbase full roster ${manager.managerName}: ${result.length} unique player(s) from all available sources`);
-  return result;
+// Keep request concurrency low: rate-limiting here previously caused the
+// whole liveticker to lose every manager tag.
+async function loadLeagueSquads(leagueId, managers, concurrency = 2) {
+  const results = new Array(managers.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(concurrency, managers.length) }, async () => {
+    while (next < managers.length) {
+      const index = next++;
+      results[index] = await loadManagerSquad(leagueId, managers[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results.flat();
 }
 
 function sameManager(matches) {
@@ -350,39 +381,57 @@ export function findSimilarOwnershipPlayers(playerNameToFind, snapshot, limit = 
 }
 
 export async function getReliableKickbaseOwnership({ force = false } = {}) {
-  if (!force && snapshotCache.value && snapshotCache.expiresAt > Date.now()) return snapshotCache.value;
+  if (!force && snapshotCache.value?.ok && snapshotCache.expiresAt > Date.now()) return snapshotCache.value;
+  if (pendingSnapshot) return pendingSnapshot;
+
+  pendingSnapshot = (async () => {
+    try {
+      const leagueId = await resolveLeagueId();
+      if (!leagueId) return { ok: false, code: "LEAGUE_NOT_FOUND", error: "Kickbase-Liga konnte nicht gefunden werden." };
+
+      let live = { managers: [], players: [] };
+      try {
+        live = parseLive(await apiGet(`/leagues/${leagueId}/live`));
+      } catch (error) {
+        console.warn(`⚠️ Kickbase live ownership unavailable: ${error?.message || error}`);
+      }
+
+      const managers = await loadManagerDirectory(leagueId, live.managers);
+      const squadPlayers = await loadLeagueSquads(leagueId, managers);
+      const players = mergePlayers(squadPlayers, live.players);
+      const stats = {
+        leagueId,
+        leagueName: DEFAULT_LEAGUE_NAME,
+        managers,
+        players,
+        livePlayerCount: live.players.length,
+        squadPlayerCount: squadPlayers.length,
+        fetchedAt: new Date().toISOString(),
+      };
+
+      // A successful HTTP response is not necessarily a usable owner index.
+      // Do not publish dozens of ownerless live events during a Kickbase outage.
+      const valid = managers.length >= 3
+        && players.length >= Math.max(20, managers.length * 5);
+      const value = valid
+        ? { ok: true, ...stats }
+        : {
+            ok: false,
+            code: "INCOMPLETE_OWNERSHIP",
+            error: `Besitzerindex unvollständig: ${managers.length} Manager, ${squadPlayers.length} Kaderspieler, ${live.players.length} Live-Spieler.`,
+            ...stats,
+          };
+      console.log(`👤 Kickbase owner health: ${value.ok ? "OK" : "INCOMPLETE"}, managers=${managers.length}, squads=${squadPlayers.length}, live=${live.players.length}, merged=${players.length}`);
+      if (value.ok) snapshotCache = { value, expiresAt: Date.now() + CACHE_MS };
+      return value;
+    } catch (error) {
+      return { ok: false, code: "API_ERROR", error: error?.message || "Kickbase-Besitzerdaten konnten nicht geladen werden." };
+    }
+  })();
 
   try {
-    const leagueId = await resolveLeagueId();
-    if (!leagueId) return { ok: false, code: "LEAGUE_NOT_FOUND", error: "Kickbase-Liga konnte nicht gefunden werden." };
-
-    let live = { managers: [], players: [] };
-    try {
-      live = parseLive(await apiGet(`/leagues/${leagueId}/live`));
-      console.log(`📊 Kickbase live source: managers=${live.managers.length}, players=${live.players.length}`);
-    } catch (error) {
-      console.warn(`⚠️ Kickbase live ownership unavailable: ${error?.message || error}`);
-    }
-
-    const managers = await loadManagerDirectory(leagueId, live.managers);
-    const squadLists = await Promise.all(managers.map(manager => loadManagerSquad(leagueId, manager)));
-    const squadPlayers = squadLists.flat();
-    const players = mergePlayers(squadPlayers, live.players);
-
-    const value = {
-      ok: true,
-      leagueId,
-      leagueName: DEFAULT_LEAGUE_NAME,
-      managers,
-      players,
-      livePlayerCount: live.players.length,
-      squadPlayerCount: squadPlayers.length,
-      fetchedAt: new Date().toISOString(),
-    };
-    snapshotCache = { value, expiresAt: Date.now() + CACHE_MS };
-    console.log(`👤 Kickbase ownership snapshot: managers=${managers.length}, squads=${squadPlayers.length}, live=${live.players.length}, merged=${players.length}`);
-    return value;
-  } catch (error) {
-    return { ok: false, code: "API_ERROR", error: error?.message || "Kickbase-Besitzerdaten konnten nicht geladen werden." };
+    return await pendingSnapshot;
+  } finally {
+    pendingSnapshot = null;
   }
 }
