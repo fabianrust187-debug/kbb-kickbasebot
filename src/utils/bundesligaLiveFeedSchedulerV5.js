@@ -757,7 +757,11 @@ async function processGuild(guild) {
       discordManagerMap(guild),
     ]);
     if (!ownership.ok) {
-      console.warn(`⚠️ Kickbase ownership unavailable: ${ownership.error || ownership.code}`);
+      // Do not mark events as seen or send them without owner information.
+      // The ESPN events remain available on the next poll, including after
+      // final whistle as long as this match was observed live.
+      console.warn(`⏳ Bundesliga V5 deferred ${ready.length} event(s): Kickbase owner lookup unavailable (${ownership.error || ownership.code})`);
+      return;
     }
 
     ready.sort((a, b) => a.action.sort - b.action.sort);
