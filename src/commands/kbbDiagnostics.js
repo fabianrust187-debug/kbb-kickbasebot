@@ -137,6 +137,7 @@ export async function runKbbHelp(interaction) {
       "Über den Button **Benachrichtigungen an / aus** im Liveticker kann jedes Mitglied die Benachrichtigungsrolle selbst umschalten. Ohne Rolle bleibt der Manager in der Meldung weiterhin als anklickbare Discord-Mention verlinkt, erhält aber keinen Ping.",
       "Neue Tore werden kurz gesammelt und Informationen aus ESPN Scoring-Plays, Key-Events, Matchdetails und Commentary zusammengeführt, damit Spielstand und Vorlagengeber möglichst vollständig in einer einzigen Meldung erscheinen.",
       "Die Besitzerzuordnung ermittelt die Liga-Manager über Overview/Ranking und lädt anschließend deren vollständige Kickbase-Kader; doppelte Live-/Kaderdatensätze desselben Besitzers werden dabei nicht mehr als Mehrdeutigkeit behandelt.",
+      "Wenn die Kickbase-Besitzerabfrage unvollständig ist, hält der Bot neue Live-Ereignisse zurück, statt sie ohne Manager-Markierung zu posten. Diagnose: `/kbb owner-test spieler:<Name>` (Admin).",
       "Nach Restart/Deploy werden bereits vorhandene Ereignisse des laufenden Spiels als Ausgangsstand übernommen und nicht erneut nachgepostet.",
       "**Kartenscoring:** Rot **-75**, Gelb-Rot **-50** Kickbase-Punkte.",
       "**Regulärer Rundenstart:** Freitag um **20:00 Uhr (Europe/Berlin)** – aber nur, wenn an diesem Wochenende ein Bundesliga-Spieltag stattfindet. Länderspielpausen werden automatisch übersprungen.",
