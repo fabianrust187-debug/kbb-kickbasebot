@@ -11,20 +11,62 @@ function hasAdminPermission(interaction) {
     || !!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator);
 }
 
+const OWNER_TEST_TIMEOUT_MS = 45_000;
+
+async function getOwnerSnapshotWithTimeout() {
+  let timer;
+  try {
+    return await Promise.race([
+      // Prefer a recently verified ownership snapshot instead of initiating
+      // a new complete league scan every time the diagnostic is used.
+      getReliableKickbaseOwnership(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("OWNER_TEST_TIMEOUT")), OWNER_TEST_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function runKickbaseOwnerTest(interaction) {
+  // The main interaction handler acknowledges first, but the command also
+  // supports direct invocation without attempting a second defer.
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({ ephemeral: true });
+  }
+
   if (!interaction.guildId || !interaction.guild) {
-    return interaction.reply({ embeds: [buildErrorEmbed("Nur auf einem Server nutzbar.")], ephemeral: true });
+    return interaction.editReply({ embeds: [buildErrorEmbed("Nur auf dem KBB-Server nutzbar.")] });
   }
 
   if (!hasAdminPermission(interaction)) {
-    return interaction.reply({ embeds: [buildErrorEmbed("Du brauchst Manage Server oder Administrator.")], ephemeral: true });
+    return interaction.editReply({ embeds: [buildErrorEmbed("Du brauchst Manage Server oder Administrator.")] });
   }
 
   const playerName = String(interaction.options.getString("spieler", true) || "").trim();
-  await interaction.deferReply({ ephemeral: true });
+  console.log(`🔎 Kickbase owner-test started: player="${playerName}", guild=${interaction.guildId}`);
 
-  const snapshot = await getReliableKickbaseOwnership({ force: true });
+  let snapshot;
+  try {
+    snapshot = await getOwnerSnapshotWithTimeout();
+  } catch (error) {
+    const timedOut = error?.message === "OWNER_TEST_TIMEOUT";
+    console.error(`❌ Kickbase owner-test failed: player="${playerName}" ${timedOut ? "timeout after 45s" : error?.message || error}`);
+    return interaction.editReply({ embeds: [buildErrorEmbed([
+      timedOut
+        ? "⏱️ Die Kickbase-Besitzerabfrage dauert länger als 45 Sekunden. Discord funktioniert, aber die Liga-Kader konnten nicht rechtzeitig geladen werden."
+        : "Die Kickbase-Besitzerprüfung ist fehlgeschlagen.",
+      "",
+      "Bitte in Discloud die Protokolle nach `Kickbase owner health`, `Kickbase squad` oder `Kickbase ownership source failed` durchsuchen.",
+      "Die bestehende Abfrage darf im Hintergrund noch abschließen. Wiederhole den Test danach.",
+      "",
+      "Keine Zugangsdaten oder Tokens teilen.",
+    ].join("\n"))] });
+  }
+
   if (!snapshot.ok) {
+    console.warn(`⚠️ Kickbase owner-test incomplete for ${playerName}: ${snapshot.error || snapshot.code}`);
     return interaction.editReply({ embeds: [buildErrorEmbed([
       "Kickbase-Besitzerauflösung ist aktuell nicht vollständig. Der Liveticker wartet mit neuen Meldungen, bis die Besitzer wieder zuverlässig geladen werden.",
       "",
@@ -34,12 +76,13 @@ export async function runKickbaseOwnerTest(interaction) {
       `**Kaderspieler:** ${snapshot.squadPlayerCount ?? "nicht verfügbar"}`,
       `**Live-Spieler:** ${snapshot.livePlayerCount ?? "nicht verfügbar"}`,
       "",
-      "Falls die Zahlen weiterhin fehlen oder deutlich unter 14 Managern liegen: Bitte die Discloud-Logs mit Zeilen \`Kickbase owner health\` bzw. \`Kickbase squad\` prüfen. Zugangsdaten nicht teilen.",
+      "Bitte die Discloud-Logs mit `Kickbase owner health` oder `Kickbase squad` prüfen. Zugangsdaten nicht teilen.",
     ].join("\n"))] });
   }
 
   const owner = findOwnerInOwnershipSnapshot(playerName, snapshot);
   const similar = findSimilarOwnershipPlayers(playerName, snapshot, 6);
+  console.log(`✅ Kickbase owner-test finished: ${playerName} -> ${owner?.managerName || "no owner"}; managers=${snapshot.managers.length}; rosters=${snapshot.managersWithRoster}; players=${snapshot.players.length}`);
 
   const lines = [
     `**Gesucht:** ${playerName}`,
@@ -50,6 +93,7 @@ export async function runKickbaseOwnerTest(interaction) {
     `**Kaderspieler geladen:** ${snapshot.squadPlayerCount || 0}`,
     `**Live-Spieler geladen:** ${snapshot.livePlayerCount || 0}`,
     `**Zusammengeführte Spieler:** ${snapshot.players?.length || 0}`,
+    `**Stand:** ${snapshot.fetchedAt || "unbekannt"}`,
     "",
   ];
 
@@ -67,7 +111,6 @@ export async function runKickbaseOwnerTest(interaction) {
       "## ❌ Kein eindeutiger Besitzer gefunden",
       "Der Spieler ist entweder frei, wurde im Kader-Snapshot nicht erkannt oder der Name ist nicht eindeutig.",
     );
-
     if (similar.length) {
       lines.push(
         "",
