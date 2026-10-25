@@ -26,6 +26,17 @@ function addKbbDiagnosticSubcommands(json) {
     },
     {
       type: 1,
+      name: "top5-mw-retry",
+      description: "Fehlenden Top-5-Marktwert nachträglich laden (eigene Abgabe; Admins optional andere)",
+      options: [{
+        type: 6,
+        name: "manager",
+        description: "Optional: anderer Manager (nur Admin)",
+        required: false,
+      }],
+    },
+    {
+      type: 1,
       name: "owner-test",
       description: "Kickbase-Besitzer eines Spielers prüfen",
       options: [
