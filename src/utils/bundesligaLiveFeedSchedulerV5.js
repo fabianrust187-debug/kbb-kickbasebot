@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { advanceBundesligaGoalScore } from "./bundesligaGoalScore.js";
 import { buildKbbEmbed } from "./embeds.js";
 import { getManagers } from "./managerStore.js";
 import {
@@ -301,7 +302,7 @@ function goalActions(summary, event) {
       teamId,
       homeScore: num(item?.homeScore),
       awayScore: num(item?.awayScore),
-      ownGoal: item?.ownGoal === true || rawType.includes("own goal"),
+      ownGoal: item?.ownGoal === true || rawType.includes("own goal") || rawText.includes("own goal"),
       penalty: item?.penaltyKick === true || item?.penalty === true || rawType.includes("penalty"),
       period: num(item?.period?.number ?? item?.period) || 0,
       quality: entryScore(entry) + (people.assist ? 20 : 0),
@@ -321,6 +322,11 @@ function goalActions(summary, event) {
     };
     if (richer.homeScore === null && poorer.homeScore !== null) richer.homeScore = poorer.homeScore;
     if (richer.awayScore === null && poorer.awayScore !== null) richer.awayScore = poorer.awayScore;
+    // A lower-priority event can contain the correct own-goal flag, even when
+    // a higher-priority scoring event has better participants/assists.
+    richer.ownGoal = richer.ownGoal || poorer.ownGoal;
+    richer.penalty = richer.penalty || poorer.penalty;
+    if (!richer.teamId && poorer.teamId) richer.teamId = poorer.teamId;
     groups.set(identity, richer);
   }
 
@@ -339,29 +345,28 @@ function goalActions(summary, event) {
       - sortValue(b[1].m, b[1].period, b[1].entry.index));
 
   const matchTeams = teams(event);
-  let home = 0;
-  let away = 0;
+  let scoreState = { home: 0, away: 0 };
 
   return ordered.map(([identity, group]) => {
-    if (group.homeScore !== null && group.awayScore !== null) {
-      home = group.homeScore;
-      away = group.awayScore;
-    } else {
-      let scoringTeam = group.teamId;
-      if (group.ownGoal && scoringTeam) {
-        if (scoringTeam === matchTeams.home.id) scoringTeam = matchTeams.away.id;
-        else if (scoringTeam === matchTeams.away.id) scoringTeam = matchTeams.home.id;
-      }
-      if (scoringTeam === matchTeams.home.id) home += 1;
-      else if (scoringTeam === matchTeams.away.id) away += 1;
+    const updated = advanceBundesligaGoalScore(scoreState, group, matchTeams);
+    scoreState = { home: updated.home, away: updated.away };
+
+    if (updated.conflict) {
+      console.warn(
+        `⚠️ Bundesliga score mismatch in ${eventId} at ${group.m.display}': `
+        + `ESPN reported ${group.homeScore}:${group.awayScore}, `
+        + `credited team ${group.teamId} => ${updated.home}:${updated.away}`,
+      );
+    } else if (!updated.verified) {
+      console.warn(`⚠️ Bundesliga goal ${eventId} at ${group.m.display}': no trustworthy scoring team/score`);
     }
 
     return {
       kind: "goal",
       playerName: group.people.scorer,
       scorer: group.people.scorer,
-      assist: group.people.assist || null,
-      score: `${home}:${away}`,
+      assist: group.ownGoal ? null : group.people.assist || null,
+      score: updated.verified ? `${updated.home}:${updated.away}` : "?:?",
       minute: group.m.display,
       ownGoal: group.ownGoal,
       penalty: group.penalty,
@@ -573,14 +578,16 @@ function buildPost(event, action, ownership, managerMap) {
     const assistTag = ownerTag(assistOwner, managerMap);
     const flags = [
       action.penalty ? "Elfmeter" : null,
-      action.ownGoal ? "Eigentor" : null,
+      // An own goal is already prominently marked in the goal headline.
     ].filter(Boolean);
 
     return {
       embed: buildKbbEmbed({
         title: "🚨 TOR IN DER BUNDESLIGA!",
         description: [
-          `## ⚽ **${action.score} durch ${escapeDiscord(action.scorer)}**${tag.text}`,
+          action.ownGoal
+            ? `## ⚽ **${action.score} – Eigentor durch ${escapeDiscord(action.scorer)}**${tag.text}`
+            : `## ⚽ **${action.score} durch ${escapeDiscord(action.scorer)}**${tag.text}`,
           action.assist ? `🎯 Vorlage: **${escapeDiscord(action.assist)}**${assistTag.text}` : null,
           flags.length ? `ℹ️ ${flags.join(" • ")}` : null,
           "",
