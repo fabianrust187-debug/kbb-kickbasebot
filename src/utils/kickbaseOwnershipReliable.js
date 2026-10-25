@@ -313,7 +313,7 @@ async function loadManagerSquad(leagueId, manager) {
 
 // Keep request concurrency low: rate-limiting here previously caused the
 // whole liveticker to lose every manager tag.
-async function loadLeagueSquads(leagueId, managers, concurrency = 2) {
+async function loadLeagueSquads(leagueId, managers, concurrency = 4) {
   const results = new Array(managers.length);
   let next = 0;
   const workers = Array.from({ length: Math.min(concurrency, managers.length) }, async () => {
@@ -406,19 +406,23 @@ export async function getReliableKickbaseOwnership({ force = false } = {}) {
         players,
         livePlayerCount: live.players.length,
         squadPlayerCount: squadPlayers.length,
+        managersWithRoster: new Set(squadPlayers.map(player => player.managerId).filter(Boolean)).size,
         fetchedAt: new Date().toISOString(),
       };
 
       // A successful HTTP response is not necessarily a usable owner index.
       // Do not publish dozens of ownerless live events during a Kickbase outage.
-      const valid = managers.length >= 3
-        && players.length >= Math.max(20, managers.length * 5);
+      const expectedManagers = Math.max(1, Number(process.env.TOP5_MANAGER_TARGET || 14));
+      const loadedManagers = new Set(squadPlayers.map(player => player.managerId).filter(Boolean));
+      const valid = managers.length >= Math.ceil(expectedManagers * 0.85)
+        && loadedManagers.size >= Math.ceil(expectedManagers * 0.85)
+        && players.length >= Math.max(20, loadedManagers.size * 7);
       const value = valid
         ? { ok: true, ...stats }
         : {
             ok: false,
             code: "INCOMPLETE_OWNERSHIP",
-            error: `Besitzerindex unvollständig: ${managers.length} Manager, ${squadPlayers.length} Kaderspieler, ${live.players.length} Live-Spieler.`,
+            error: `Besitzerindex unvollständig: ${managers.length} Manager, ${stats.managersWithRoster} Manager mit Kader, ${squadPlayers.length} Kaderspieler, ${live.players.length} Live-Spieler.`,
             ...stats,
           };
       console.log(`👤 Kickbase owner health: ${value.ok ? "OK" : "INCOMPLETE"}, managers=${managers.length}, squads=${squadPlayers.length}, live=${live.players.length}, merged=${players.length}`);
