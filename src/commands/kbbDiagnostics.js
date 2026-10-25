@@ -117,6 +117,7 @@ export async function runKbbHelp(interaction) {
       "• `/kbb top5` — private Top-5-Abgabe starten bzw. eine versäumte Abgabe nachreichen",
       "• `/kbb top5-status` — Abgabestand inklusive Marktwert anzeigen",
       "• `/kbb top5-history` — gespeicherte Top-5-Abgaben und Marktwerte abrufen",
+      "• `/kbb top5-mw-retry` — fehlenden Marktwert einer bereits gespeicherten Abgabe nachladen (eigene Abgabe; Admin: optional Manager)",
       "• `/kbb top5-missing` — Fristprüfung manuell posten *(Admin)*",
       "• `/kbb top5-start` — neue Runde manuell starten, z. B. englische Woche *(Admin)*",
       "• `/kbb top5-reset` — aktuelle Runde zurücksetzen *(Admin)*",
