@@ -11,6 +11,7 @@ import kbbCommand from "./commands/kbb.js";
 import { runKbbHelp, runKickbaseInfo } from "./commands/kbbDiagnostics.js";
 import { runKickbaseFeedTest } from "./commands/kbbFeedTest.js";
 import { runKickbaseOwnerTest } from "./commands/kbbOwnerTest.js";
+import { runTop5MarketValueRetry } from "./commands/kbbTop5MarketValueRetry.js";
 import { runTop5Start } from "./commands/kbbTop5Start.js";
 import { startTop5DeadlineScheduler } from "./utils/top5Deadline.js";
 import { startTop5LateSubmissionScheduler } from "./utils/top5LateSubmissionScheduler.js";
@@ -98,6 +99,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.commandName === "kbb") {
       const subcommand = interaction.options.getSubcommand(false);
       if (subcommand === "kickbase-info") return runKickbaseInfo(interaction);
+      if (subcommand === "top5-mw-retry") {
+        console.log(`💰 /kbb top5-mw-retry requested by ${interaction.user.tag} (${interaction.user.id})`);
+        if (!interaction.deferred && !interaction.replied) await interaction.deferReply({ ephemeral: true });
+        return runTop5MarketValueRetry(interaction);
+      }
       if (subcommand === "owner-test") {
         console.log(`🔎 /kbb owner-test requested by ${interaction.user.tag} (${interaction.user.id})`);
         // Discord requires an initial ACK within three seconds. Defer in
