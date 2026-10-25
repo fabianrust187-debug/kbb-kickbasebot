@@ -635,9 +635,9 @@ async function handleTop5ModalSubmit(interaction) {
     await interaction.channel?.send({ embeds: [buildTop5SummaryEmbed(result.submissions)] }).catch(() => null);
   }
 
-  const apiWarning = result.lookup?.ok
+  const apiWarning = result.submission.marketValue !== null
     ? ""
-    : "\n⚠️ Kickbase war gerade nicht erreichbar oder noch nicht konfiguriert. Die Abgabe wurde trotzdem gespeichert; der Marktwert steht daher auf **nicht verfügbar**.";
+    : "\n⚠️ Kickbase konnte den Marktwert nicht liefern. Die Abgabe bleibt gespeichert. Mit `/kbb top5-mw-retry` kannst du ihn später nachladen.";
 
   await interaction.editReply({
     content: `✅ Abgabe gespeichert: **${result.submission.playerName}** • MW: **${formatMarketValue(result.submission.marketValue)}** (${result.count}/${result.target})${apiWarning}`,
