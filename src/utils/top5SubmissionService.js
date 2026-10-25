@@ -2,6 +2,7 @@ import { formatMarketValue, resolveKickbasePlayerMarketValue } from "./kickbaseA
 import { isTop5DeadlinePassed } from "./top5Deadline.js";
 import {
   addTop5Submission,
+  attachTop5MarketValue,
   correctTop5Submission,
   getTop5Round,
   getTop5SubmissionForUser,
@@ -34,6 +35,7 @@ export async function submitTop5WithMarketValue(guildId, user, inputName, target
 
   const submittedPlayerName = sanitizePlayerName(inputName);
   const lookup = await resolveKickbasePlayerMarketValue(submittedPlayerName);
+  if (!lookup.ok) console.warn(`⚠️ Top-5 Marktwert nicht verfügbar für ${submittedPlayerName}: ${lookup.code || "API_ERROR"} / ${lookup.error || "unbekannt"}`);
 
   if (!lookup.ok && ["AMBIGUOUS", "NOT_FOUND"].includes(lookup.code)) {
     return {
@@ -133,6 +135,36 @@ export async function correctTop5WithMarketValue(guildId, user, inputName, actor
     lookup,
     marketValueAvailable: result.ok && result.submission.marketValue !== null,
   };
+}
+
+/**
+ * Retry a missing market value without replacing the player's submission.
+ * A value fetched now is clearly labelled as recovered, not represented as
+ * an exact historic price from the original submission time.
+ */
+export async function retryMissingTop5MarketValue(guildId, userId) {
+  const existing = getTop5SubmissionForUser(guildId, userId);
+  if (!existing) return { ok: false, code: "NOT_FOUND", error: "Keine Top-5-Abgabe in der aktuellen Runde vorhanden." };
+  if (existing.marketValue !== null && existing.marketValue !== undefined) {
+    return { ok: false, code: "ALREADY_SET", error: "Der Marktwert ist bereits hinterlegt.", submission: existing };
+  }
+
+  const playerName = sanitizePlayerName(existing.submittedPlayerName || existing.playerName);
+  const lookup = await resolveKickbasePlayerMarketValue(playerName);
+  console.log(`💰 Top-5 MW retry for ${userId} / ${playerName}: ${lookup.ok ? "OK" : lookup.code || "FAILED"}`);
+
+  if (!lookup.ok) return {
+    ok: false,
+    code: lookup.code || "API_ERROR",
+    error: lookup.error || "Kickbase-Marktwert aktuell nicht erreichbar.",
+    suggestions: lookup.suggestions || [],
+  };
+  if (!Number.isFinite(lookup.marketValue)) return {
+    ok: false,
+    code: "VALUE_MISSING",
+    error: "Kickbase hat den Spieler gefunden, aber derzeit keinen gültigen Marktwert geliefert.",
+  };
+  return attachTop5MarketValue(guildId, userId, lookup);
 }
 
 export function formatTop5SubmissionLine(userId, submission) {
