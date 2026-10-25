@@ -324,6 +324,45 @@ export function correctTop5Submission(
   };
 }
 
+/**
+ * Enrich an existing submission with an API value without changing the
+ * submitted player, submission timestamp, late status or participant count.
+ * Never erase a valid value if a later API refresh fails.
+ */
+export function attachTop5MarketValue(guildId, userId, lookup) {
+  if (!guildId || !userId || !lookup?.ok) {
+    return { ok: false, error: "Kein gültiger Kickbase-Marktwert abrufbar." };
+  }
+  const marketValue = validMarketValue(lookup.marketValue);
+  if (marketValue === null) {
+    return { ok: false, error: "Kickbase hat keinen numerischen Marktwert geliefert." };
+  }
+
+  const data = read();
+  const round = data[guildId]?.activeRound;
+  const existing = round?.submissions?.[userId];
+  if (!existing) {
+    return { ok: false, error: "Diese Top-5-Abgabe wurde nicht gefunden." };
+  }
+  if (existing.marketValue !== null && existing.marketValue !== undefined) {
+    return { ok: false, code: "ALREADY_SET", error: "Der Marktwert dieser Abgabe ist bereits gespeichert.", submission: existing };
+  }
+
+  const updated = {
+    ...existing,
+    kickbasePlayerId: lookup.playerId ? String(lookup.playerId) : existing.kickbasePlayerId,
+    marketValue,
+    marketValueFetchedAt: validIso(lookup.fetchedAt),
+    marketValueSource: `${lookup.source || "kickbase-v4"}-recovered`,
+    marketValueRecoveredAt: new Date().toISOString(),
+    kickbaseCompetitionId: lookup.competitionId ? String(lookup.competitionId) : existing.kickbaseCompetitionId,
+    kickbaseLeagueId: lookup.leagueId ? String(lookup.leagueId) : existing.kickbaseLeagueId,
+  };
+  round.submissions[userId] = updated;
+  if (!write(data)) return { ok: false, error: "Marktwert konnte nicht gespeichert werden." };
+  return { ok: true, previousSubmission: existing, submission: updated };
+}
+
 export function closeTop5Round(guildId, actor = null, reason = "complete") {
   if (!guildId) return { ok: false, error: "Missing guild." };
 
