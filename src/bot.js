@@ -98,7 +98,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.commandName === "kbb") {
       const subcommand = interaction.options.getSubcommand(false);
       if (subcommand === "kickbase-info") return runKickbaseInfo(interaction);
-      if (subcommand === "owner-test") return runKickbaseOwnerTest(interaction);
+      if (subcommand === "owner-test") {
+        console.log(`🔎 /kbb owner-test requested by ${interaction.user.tag} (${interaction.user.id})`);
+        // Discord requires an initial ACK within three seconds. Defer in
+        // the central handler BEFORE the potentially slow Kickbase scan.
+        if (!interaction.deferred && !interaction.replied) {
+          await interaction.deferReply({ ephemeral: true });
+        }
+        return runKickbaseOwnerTest(interaction);
+      }
       if (subcommand === "feed-test") {
         console.log(`🧪 /kbb feed-test requested by ${interaction.user.tag} (${interaction.user.id})`);
         if (!interaction.deferred && !interaction.replied) {
