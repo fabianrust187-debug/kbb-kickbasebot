@@ -1,10 +1,14 @@
 const API_BASE = "https://api.kickbase.com/v4";
 const DEFAULT_COMPETITION_ID = process.env.KICKBASE_COMPETITION_ID || "1";
 const DEFAULT_LEAGUE_NAME = process.env.KICKBASE_LEAGUE_NAME || "187 KICKBASEBANDE";
-const REQUEST_TIMEOUT_MS = Number(process.env.KICKBASE_API_TIMEOUT_MS || 10000);
+const REQUEST_TIMEOUT_MS = Math.max(3000, Number(process.env.KICKBASE_API_TIMEOUT_MS || 10000));
+const RATE_LIMIT_RETRIES = 2;
+const RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 let cachedToken = String(process.env.KICKBASE_TOKEN || "").trim() || null;
 let cachedLeagueId = String(process.env.KICKBASE_LEAGUE_ID || "").trim() || null;
+let pendingLogin = null;
 
 function normalize(value) {
   return String(value || "")
@@ -143,27 +147,25 @@ async function fetchJson(url, options = {}) {
 }
 
 async function login() {
-  const email = String(process.env.KICKBASE_EMAIL || "").trim();
-  const password = String(process.env.KICKBASE_PASSWORD || "");
-  if (!email || !password) return null;
+  if (pendingLogin) return pendingLogin;
+  pendingLogin = (async () => {
+    const email = String(process.env.KICKBASE_EMAIL || "").trim();
+    const password = String(process.env.KICKBASE_PASSWORD || "");
+    if (!email || !password) return null;
 
-  const { response, data } = await fetchJson(`${API_BASE}/user/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      em: email,
-      loy: false,
-      pass: password,
-      rep: {},
-    }),
-  });
-
-  if (!response.ok || !data?.tkn) {
-    throw new Error(`Kickbase login failed (${response.status}).`);
-  }
-
-  cachedToken = String(data.tkn);
-  return cachedToken;
+    const { response, data } = await fetchJson(`${API_BASE}/user/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ em: email, loy: false, pass: password, rep: {} }),
+    });
+    if (!response.ok || !data?.tkn) {
+      throw new Error(`Kickbase login failed (${response.status}).`);
+    }
+    cachedToken = String(data.tkn);
+    return cachedToken;
+  })();
+  try { return await pendingLogin; }
+  finally { pendingLogin = null; }
 }
 
 async function getToken(forceLogin = false) {
@@ -181,14 +183,9 @@ async function getToken(forceLogin = false) {
   return null;
 }
 
+// Retry only temporary errors, with a short bounded pause. Permanent 4xx
+// errors (including invalid credentials) are passed back immediately.
 async function apiGet(path, query = null) {
-  let token = await getToken();
-  if (!token) {
-    const error = new Error("Kickbase API credentials are not configured.");
-    error.code = "NOT_CONFIGURED";
-    throw error;
-  }
-
   const url = new URL(`${API_BASE}${path}`);
   if (query) {
     for (const [key, value] of Object.entries(query)) {
@@ -196,26 +193,61 @@ async function apiGet(path, query = null) {
     }
   }
 
-  const request = async (authToken) => fetchJson(url.toString(), {
-    headers: { Authorization: `Bearer ${authToken}` },
-  });
+  for (let attempt = 0; attempt <= RATE_LIMIT_RETRIES; attempt++) {
+    let token = await getToken();
+    if (!token) {
+      const error = new Error("Kickbase API credentials are not configured.");
+      error.code = "NOT_CONFIGURED";
+      throw error;
+    }
 
-  let result = await request(token);
+    try {
+      const request = authToken => fetchJson(url.toString(), {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      let result = await request(token);
+      if (result.response.status === 401
+        && process.env.KICKBASE_EMAIL && process.env.KICKBASE_PASSWORD) {
+        // If another request already refreshed the token, use that token
+        // rather than forcing a second login.
+        if (cachedToken && cachedToken !== token) token = cachedToken;
+        else {
+          cachedToken = null;
+          token = await getToken(true);
+        }
+        if (token) result = await request(token);
+      }
 
-  if (result.response.status === 401 && process.env.KICKBASE_EMAIL && process.env.KICKBASE_PASSWORD) {
-    cachedToken = null;
-    token = await getToken(true);
-    if (token) result = await request(token);
+      if (result.response.ok) return result.data;
+      const status = result.response.status;
+      if (RETRY_STATUSES.has(status) && attempt < RATE_LIMIT_RETRIES) {
+        const retryHeader = Number(result.response.headers.get("retry-after"));
+        const backoff = Number.isFinite(retryHeader) && retryHeader > 0
+          ? Math.min(5000, retryHeader * 1000)
+          : Math.min(4000, 750 * (2 ** attempt));
+        console.warn(`⚠️ Kickbase ${path}: HTTP ${status}, retry ${attempt + 1}/${RATE_LIMIT_RETRIES} in ${backoff}ms`);
+        await sleep(backoff);
+        continue;
+      }
+      const error = new Error(`Kickbase API HTTP ${status} for ${path}.`);
+      error.status = status;
+      error.code = status === 401 ? "AUTH_FAILED"
+        : status === 429 ? "RATE_LIMIT"
+        : "API_ERROR";
+      throw error;
+    } catch (error) {
+      const transientNetworkError = error?.name === "AbortError"
+        || error?.name === "TypeError";
+      if (transientNetworkError && attempt < RATE_LIMIT_RETRIES) {
+        const pause = Math.min(4000, 750 * (2 ** attempt));
+        console.warn(`⚠️ Kickbase ${path}: ${error.name}, retry ${attempt + 1}/${RATE_LIMIT_RETRIES}`);
+        await sleep(pause);
+        continue;
+      }
+      throw error;
+    }
   }
-
-  if (!result.response.ok) {
-    const error = new Error(`Kickbase API request failed (${result.response.status}) for ${path}.`);
-    error.status = result.response.status;
-    error.code = result.response.status === 401 ? "AUTH_FAILED" : "API_ERROR";
-    throw error;
-  }
-
-  return result.data;
+  throw new Error(`Kickbase API request failed after retries for ${path}.`);
 }
 
 async function resolveLeagueId() {
@@ -372,6 +404,15 @@ export async function resolveKickbasePlayerMarketValue(inputName) {
     }
 
     const current = await loadCurrentMarketValue(selected.player);
+    if (!Number.isFinite(current.marketValue) || current.marketValue < 0) {
+      return {
+        ok: false,
+        code: "VALUE_MISSING",
+        error: "Spieler gefunden, aber Kickbase hat aktuell keinen gültigen Marktwert geliefert.",
+        submittedName,
+        playerName: current.officialName || selected.player.name,
+      };
+    }
     return {
       ok: true,
       submittedName,
