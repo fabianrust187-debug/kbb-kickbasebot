@@ -309,39 +309,46 @@ function choosePlayer(players, query) {
 }
 
 async function loadCurrentMarketValue(player) {
+  // Player search usually includes the current market value. Avoid the old
+  // unconditional competition + league detail double-call for every submit.
   let marketValue = player.marketValue;
   let detail = null;
-
-  try {
-    detail = await apiGet(`/competitions/${DEFAULT_COMPETITION_ID}/players/${player.id}`);
-    marketValue = extractMarketValue(detail) ?? marketValue;
-  } catch {
-    // Competition detail is a convenience fallback; league data below is preferred when available.
-  }
-
   let leagueId = null;
+
   try {
     leagueId = await resolveLeagueId();
-  } catch {
-    leagueId = null;
+  } catch (error) {
+    console.warn(`⚠️ Kickbase league lookup for MW failed: ${error?.code || error?.message || error}`);
   }
 
+  // League detail is preferred where present, but do not discard the search
+  // value if that optional endpoint is unavailable.
   if (leagueId) {
     try {
       const leaguePlayer = await apiGet(`/leagues/${leagueId}/players/${player.id}`);
       marketValue = extractMarketValue(leaguePlayer) ?? marketValue;
-      detail = leaguePlayer || detail;
-    } catch {
-      // Keep competition/search value if the league endpoint is temporarily unavailable.
+      detail = leaguePlayer;
+    } catch (error) {
+      console.warn(`⚠️ Kickbase league player detail unavailable for ${player.id}: ${error?.code || error?.message || error}`);
     }
+  }
 
-    if (marketValue === null) {
-      try {
-        const history = await apiGet(`/leagues/${leagueId}/players/${player.id}/marketValue/365`);
-        marketValue = extractMarketValue(history);
-      } catch {
-        // Market value remains unavailable; the caller decides whether to fail open.
-      }
+  if (marketValue === null) {
+    try {
+      const competitionPlayer = await apiGet(`/competitions/${DEFAULT_COMPETITION_ID}/players/${player.id}`);
+      marketValue = extractMarketValue(competitionPlayer) ?? marketValue;
+      detail = detail || competitionPlayer;
+    } catch (error) {
+      console.warn(`⚠️ Kickbase competition player detail unavailable for ${player.id}: ${error?.code || error?.message || error}`);
+    }
+  }
+
+  if (marketValue === null && leagueId) {
+    try {
+      const history = await apiGet(`/leagues/${leagueId}/players/${player.id}/marketValue/365`);
+      marketValue = extractMarketValue(history);
+    } catch (error) {
+      console.warn(`⚠️ Kickbase historical market value unavailable for ${player.id}: ${error?.code || error?.message || error}`);
     }
   }
 
