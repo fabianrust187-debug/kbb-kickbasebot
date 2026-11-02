@@ -3,7 +3,7 @@ import { buildErrorEmbed } from "../utils/embeds.js";
 import { getGuildSettings } from "../utils/guildSettings.js";
 import { formatMarketValue } from "../utils/kickbaseApi.js";
 import { fetchTop5ChannelHistory, parseTop5SubmissionMessage } from "../utils/top5Recovery.js";
-import { getTop5SubmissionForUser } from "../utils/top5Store.js";
+import { getTop5SubmissionForUser, getTop5Submissions } from "../utils/top5Store.js";
 import {
   formatTop5SubmissionLine,
   retryMissingTop5MarketValue,
@@ -31,12 +31,111 @@ function originalSubmissionMessage(messages, botId, userId) {
     .find(message => parseTop5SubmissionMessage(message)?.userId === String(userId)) || null;
 }
 
+async function saveRecoveryToDiscord(interaction, userId, previous, updated, channel, messages) {
+  if (!channel?.isTextBased?.() || !channel.messages?.fetch) {
+    return { durable: false, updatedOriginal: false };
+  }
+
+  const history = messages || await fetchTop5ChannelHistory(channel, 500).catch(() => []);
+  const original = originalSubmissionMessage(history, interaction.client.user.id, userId);
+  const content = `${formatTop5SubmissionLine(userId, updated)} • 💰 *Marktwert nachträglich ermittelt*`;
+
+  if (original?.edit) {
+    const changed = await original.edit({ content, allowedMentions: { parse: [] } })
+      .then(() => true).catch(() => false);
+    if (changed) return { durable: true, updatedOriginal: true };
+  }
+
+  // Preserve original submission timestamp when a new fallback post is needed.
+  const timestamp = Math.floor(new Date(previous.createdAt).getTime() / 1000);
+  const fallback = await channel.send({
+    content: `${content} • ursprüngliche Abgabe: <t:${timestamp}:f>`,
+    allowedMentions: { parse: [] },
+  }).catch(() => null);
+  return { durable: !!fallback, updatedOriginal: false };
+}
+
+async function retryAllMissingMarketValues(interaction) {
+  if (!isAdmin(interaction)) {
+    return interaction.editReply({ content: "❌ Nur die Ligaleitung darf alle fehlenden Marktwerte auf einmal nachladen." });
+  }
+
+  const missing = getTop5Submissions(interaction.guildId)
+    .filter(entry => entry.marketValue === null || entry.marketValue === undefined);
+  if (!missing.length) {
+    return interaction.editReply({ content: "✅ In der aktuellen Top-5-Runde fehlen keine Marktwerte." });
+  }
+
+  await interaction.editReply({
+    content: `🔄 Ich prüfe ${missing.length} fehlende Marktwerte nacheinander. Die ursprünglichen Abgaben bleiben erhalten.`,
+  });
+
+  const channel = await interaction.guild.channels.fetch(top5ChannelId(interaction.guildId)).catch(() => null);
+  const history = channel?.messages?.fetch
+    ? await fetchTop5ChannelHistory(channel, 500).catch(() => [])
+    : [];
+
+  const recovered = [];
+  const failed = [];
+  let savedMessages = 0;
+  for (const [index, entry] of missing.entries()) {
+    try {
+      const previous = getTop5SubmissionForUser(interaction.guildId, entry.userId);
+      if (!previous || previous.marketValue !== null && previous.marketValue !== undefined) continue;
+
+      const result = await retryMissingTop5MarketValue(interaction.guildId, entry.userId);
+      if (!result.ok) {
+        failed.push(`• <@${entry.userId}> — **${entry.playerName}**: ${result.error || result.code || "API nicht erreichbar"}`);
+      } else {
+        const persistence = await saveRecoveryToDiscord(
+          interaction, entry.userId, previous, result.submission, channel, history,
+        );
+        if (persistence.durable) savedMessages++;
+        recovered.push(`• <@${entry.userId}> — **${entry.playerName}**: **${formatMarketValue(result.submission.marketValue)}**`);
+      }
+    } catch (error) {
+      console.error(`❌ Top-5 MW bulk retry failed for ${entry.playerName}:`, error?.message || error);
+      failed.push(`• <@${entry.userId}> — **${entry.playerName}**: interner Fehler`);
+    }
+
+    // Space out API queries to reduce the risk of rate-limiting.
+    if (index < missing.length - 1) await new Promise(resolve => setTimeout(resolve, 1500));
+  }
+
+  const lines = [
+    "## 💰 Top-5-Marktwerte nachgeladen",
+    `**Abgaben geprüft:** ${missing.length}`,
+    `**Erfolgreich:** ${recovered.length}`,
+    `**Noch fehlend:** ${failed.length}`,
+    "",
+    ...(recovered.length ? ["**✅ Nachgetragen:**", ...recovered, ""] : []),
+    ...(failed.length ? ["**⚠️ Noch offen:**", ...failed, ""] : []),
+    "Die ursprünglichen Spieler und Abgabezeiten bleiben unverändert.",
+    "⚠️ Nachgeladene Werte entsprechen dem Zeitpunkt der erneuten Abfrage.",
+    savedMessages < recovered.length
+      ? `⚠️ ${recovered.length - savedMessages} Aktualisierung(en) wurden nicht im Discord-Kanal gesichert. Bitte Kanalberechtigungen prüfen.`
+      : "",
+  ];
+  return interaction.editReply({
+    content: lines.filter(Boolean).join("\n").slice(0, 1950),
+    allowedMentions: { parse: [] },
+  });
+}
+
 export async function runTop5MarketValueRetry(interaction) {
   if (!interaction.deferred && !interaction.replied) {
     await interaction.deferReply({ ephemeral: true });
   }
   if (!interaction.guild) {
     return interaction.editReply({ embeds: [buildErrorEmbed("Nur auf dem KBB-Server nutzbar.")] });
+  }
+
+  const all = interaction.options.getBoolean("alle") === true;
+  if (all) {
+    if (interaction.options.getUser("manager")) {
+      return interaction.editReply({ content: "❌ Bitte entweder `alle:true` oder einen einzelnen Manager auswählen." });
+    }
+    return retryAllMissingMarketValues(interaction);
   }
 
   const selected = interaction.options.getUser("manager");
@@ -66,43 +165,17 @@ export async function runTop5MarketValueRetry(interaction) {
     });
   }
 
-  const channelId = top5ChannelId(interaction.guildId);
-  const channel = await interaction.guild.channels.fetch(channelId).catch(() => null);
-  let durable = false;
-  let updatedOriginal = false;
-  if (channel?.isTextBased?.() && channel.messages?.fetch) {
-    const messages = await fetchTop5ChannelHistory(channel, 500).catch(() => []);
-    const oldMessage = originalSubmissionMessage(messages, interaction.client.user.id, userId);
-    const publicLine = `${formatTop5SubmissionLine(userId, result.submission)} • 💰 *Marktwert nachträglich ermittelt*`;
+  const channel = await interaction.guild.channels.fetch(top5ChannelId(interaction.guildId)).catch(() => null);
+  const persistence = await saveRecoveryToDiscord(interaction, userId, previous, result.submission, channel);
+  console.log(`💰 Top-5 market value recovered: manager=${userId}, player=${previous.playerName}, value=${result.submission.marketValue}, persistedToDiscord=${persistence.durable}`);
 
-    if (oldMessage?.edit) {
-      durable = await oldMessage.edit({
-        content: publicLine,
-        allowedMentions: { parse: [] },
-      }).then(() => true).catch(() => false);
-      updatedOriginal = durable;
-    }
-
-    if (!durable) {
-      // Keep the original submission timestamp for recovery even if the
-      // original message is too old or cannot be edited.
-      const originalTs = Math.floor(new Date(previous.createdAt).getTime() / 1000);
-      const fallbackLine = `${publicLine} • ursprüngliche Abgabe: <t:${originalTs}:f>`;
-      durable = !!(await channel.send({
-        content: fallbackLine,
-        allowedMentions: { parse: [] },
-      }).catch(() => null));
-    }
-  }
-
-  console.log(`💰 Top-5 market value recovered: manager=${userId}, player=${previous.playerName}, value=${result.submission.marketValue}, persistedToDiscord=${durable}`);
   return interaction.editReply({
     content: [
       `✅ Marktwert für **${previous.playerName}** nachträglich geladen: **${formatMarketValue(result.submission.marketValue)}**.`,
       "Deine ursprüngliche Top-5-Abgabe und ihre Uhrzeit bleiben unverändert.",
       "⚠️ Das ist der Marktwert vom **Zeitpunkt der Nachabfrage**, nicht nachweislich der historische Wert zum Abgabezeitpunkt.",
-      durable
-        ? (updatedOriginal ? "📝 Die ursprüngliche Discord-Abgabe wurde aktualisiert." : "📝 Eine dauerhafte Ergänzung wurde im Top-5-Kanal veröffentlicht.")
+      persistence.durable
+        ? (persistence.updatedOriginal ? "📝 Die ursprüngliche Discord-Abgabe wurde aktualisiert." : "📝 Eine dauerhafte Ergänzung wurde im Top-5-Kanal veröffentlicht.")
         : "⚠️ Der neue Wert ist lokal gespeichert, konnte aber nicht dauerhaft im Discord-Kanal gesichert werden. Bitte die Kanalberechtigungen prüfen.",
     ].join("\n"),
   });
