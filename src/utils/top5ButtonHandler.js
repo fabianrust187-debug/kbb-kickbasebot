@@ -1,3 +1,4 @@
+import { ACTIVE_MANAGER_TARGET } from "./activeManagerRoster.js";
 import {
   ActionRowBuilder,
   ModalBuilder,
@@ -20,7 +21,7 @@ import {
 } from "./top5Store.js";
 
 const DEFAULT_TOP5_CHANNEL_ID = process.env.TOP5_CHANNEL_ID || "1522249357179617331";
-const TOP5_TARGET = Number(process.env.TOP5_MANAGER_TARGET || 14);
+const TOP5_TARGET = ACTIVE_MANAGER_TARGET;
 const TOP5_BUTTON_MODAL_PREFIX = "kbb_top5_button_submit:";
 
 function getTop5ChannelId(guildId) {
