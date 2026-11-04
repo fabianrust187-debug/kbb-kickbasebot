@@ -1,9 +1,11 @@
+import { getManagers } from "./managerStore.js";
+import { ACTIVE_MANAGER_TARGET } from "./activeManagerRoster.js";
 import fs from "fs";
 import path from "path";
 
 const FILE = path.resolve("src/data/top5Submissions.json");
 
-export const DEFAULT_TOP5_TARGET = 14;
+export const DEFAULT_TOP5_TARGET = ACTIVE_MANAGER_TARGET;
 
 function ensureFile() {
   const dir = path.dirname(FILE);
@@ -82,7 +84,10 @@ export function getTop5Round(guildId) {
 
 export function getTop5Submissions(guildId) {
   const round = getTop5Round(guildId);
+  // Keep prior departures in history without counting them as active.
+  const activeIds = new Set(getManagers(guildId).map(manager => String(manager.userId)));
   return Object.values(round?.submissions || {})
+    .filter(entry => activeIds.size === 0 || activeIds.has(String(entry.userId)))
     .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
 }
 
@@ -169,7 +174,10 @@ export function addTop5Submission(
 
   round.submissions[user.id] = submission;
 
-  const count = Object.keys(round.submissions).length;
+  const activeIds = new Set(getManagers(guildId).map(manager => String(manager.userId)));
+  const activeSubmissions = Object.values(round.submissions)
+    .filter(entry => activeIds.size === 0 || activeIds.has(String(entry.userId)));
+  const count = activeSubmissions.length;
   const complete = count >= target;
   if (complete && !round.completedAt) {
     round.completedAt = new Date().toISOString();
@@ -182,8 +190,7 @@ export function addTop5Submission(
   return {
     ok: true,
     submission,
-    submissions: Object.values(round.submissions)
-      .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))),
+    submissions: activeSubmissions.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))),
     count,
     target,
     complete,
@@ -243,7 +250,9 @@ export function restoreTop5Submissions(guildId, entries = [], target = DEFAULT_T
     }
   }
 
-  const complete = submissions.length >= target;
+  const activeIds = new Set(getManagers(guildId).map(manager => String(manager.userId)));
+  const activeCount = submissions.filter(entry => activeIds.size === 0 || activeIds.has(String(entry.userId))).length;
+  const complete = activeCount >= target;
   if (complete && !round.completedAt) {
     round.completedAt = submissions[submissions.length - 1]?.createdAt || new Date().toISOString();
   }
