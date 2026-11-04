@@ -1,9 +1,14 @@
 import { getGuildSettings, setGuildSettings } from "./guildSettings.js";
 import { addManager, getManagers } from "./managerStore.js";
 import { restoreTop5Submissions } from "./top5Store.js";
+import {
+  ACTIVE_MANAGER_TARGET,
+  isRetiredManagerName,
+  reconcileActiveManagerRoster,
+} from "./activeManagerRoster.js";
 
 const DEFAULT_TOP5_CHANNEL_ID = process.env.TOP5_CHANNEL_ID || "1522249357179617331";
-const DEFAULT_TARGET = Number(process.env.TOP5_MANAGER_TARGET || 14);
+const DEFAULT_TARGET = ACTIVE_MANAGER_TARGET;
 const MAX_MESSAGES = 1000;
 const ROSTER_HEADING = "## 👥 KBB Managerliste – Systemstand";
 
@@ -123,29 +128,64 @@ export async function recoverKbbStateFromDiscord(guild, { channelId = null, targ
   const restoredRound = restoreTop5Submissions(guild.id, uniqueCurrent, target);
   if (!restoredRound.ok) return restoredRound;
 
+  // Reconcile the old saved 14-manager list before restoring candidates.
+  // This excludes members who have left Discord and the explicitly departed
+  // Kickbase manager Raps (without deleting historical Top-5 submissions).
+  const reconciliation = await reconcileActiveManagerRoster(guild);
   const existingManagers = new Set(getManagers(guild.id).map(manager => String(manager.userId)));
   let managersRecovered = 0;
 
   const rosterMessage = [...botMessages].reverse().find(message => parseRosterSnapshot(message).length);
-  const rosterIds = rosterMessage ? parseRosterSnapshot(rosterMessage).slice(0, target) : [];
+  // Read ALL IDs from the previous 14-manager snapshot. Taking the first 13
+  // would remove an arbitrary manager, potentially Willy instead of Raps.
+  const rosterIds = rosterMessage ? parseRosterSnapshot(rosterMessage) : [];
+
+  async function eligible(userId) {
+    if (!userId || existingManagers.has(userId)) return false;
+    let member;
+    try {
+      member = await guild.members.fetch(userId);
+    } catch (error) {
+      if (error?.code === 10007 || error?.status === 404) return false;
+      console.warn(`⚠️ KBB recovery could not verify member ${userId}: ${error?.message || error}`);
+      // Fail closed: do not re-add unverified members when Discord is down.
+      return false;
+    }
+    return !isRetiredManagerName(
+      member.displayName,
+      member.nickname,
+      member.user?.username,
+      member.user?.globalName,
+    );
+  }
 
   for (const userId of rosterIds) {
     if (existingManagers.size >= target) break;
-    if (addRecoveredManager(guild, existingManagers, userId)) managersRecovered += 1;
+    if (await eligible(userId) && addRecoveredManager(guild, existingManagers, userId)) managersRecovered++;
   }
 
-  for (const entry of allSubmissionEntries) {
-    if (existingManagers.size >= target) break;
-    if (addRecoveredManager(guild, existingManagers, entry.userId)) managersRecovered += 1;
+  // Only use old submission history if there is NO saved manager roster at
+  // all. A saved roster is authoritative; historical submissions must never
+  // resurrect managers who have since left the league.
+  if (!rosterIds.length) {
+    for (const entry of allSubmissionEntries) {
+      if (existingManagers.size >= target) break;
+      if (await eligible(entry.userId) && addRecoveredManager(guild, existingManagers, entry.userId)) managersRecovered++;
+    }
   }
 
-  if (rosterIds.length === target) {
-    const hash = [...rosterIds].sort().join(",");
-    setGuildSettings(guild.id, {
-      managerRosterSnapshotHash: hash,
-      managerRosterSnapshotMessageId: rosterMessage?.id || null,
-      managerRosterRecoveredAt: new Date().toISOString(),
-    });
+  // On a 14 -> 13 migration, publish a fresh 13-member snapshot immediately
+  // to make the departure durable across Discloud builds.
+  const remaining = getManagers(guild.id);
+  if (remaining.length === target) {
+    const hash = remaining.map(manager => String(manager.userId)).sort().join(",");
+    if (rosterIds.length === target && hash === [...rosterIds].sort().join(",")) {
+      setGuildSettings(guild.id, {
+        managerRosterSnapshotHash: hash,
+        managerRosterSnapshotMessageId: rosterMessage?.id || null,
+        managerRosterRecoveredAt: new Date().toISOString(),
+      });
+    }
   }
 
   return {
@@ -159,6 +199,7 @@ export async function recoverKbbStateFromDiscord(guild, { channelId = null, targ
     managersRecovered,
     managerCount: getManagers(guild.id).length,
     rosterSnapshotFound: rosterIds.length === target,
+    departedManagersRemoved: reconciliation.removed.length,
     target,
   };
 }
