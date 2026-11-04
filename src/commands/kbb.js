@@ -1,4 +1,5 @@
-import { ACTIVE_MANAGER_TARGET } from "../utils/activeManagerRoster.js";
+import { ACTIVE_MANAGER_TARGET, normalizedManagerName } from "../utils/activeManagerRoster.js";
+import { ensureManagerRosterSnapshot } from "../utils/top5Recovery.js";
 import {
   SlashCommandBuilder,
   ChannelType,
@@ -555,15 +556,64 @@ async function runManagerAdd(interaction) {
 }
 
 async function runManagerRemove(interaction) {
-  if (!interaction.guildId) return interaction.reply({ embeds: [buildErrorEmbed("Nur auf einem Server nutzbar.")], ephemeral: true });
+  if (!interaction.guildId || !interaction.guild) return interaction.reply({ embeds: [buildErrorEmbed("Nur auf einem Server nutzbar.")], ephemeral: true });
   if (!hasManageServerPermission(interaction)) return interaction.reply({ embeds: [buildErrorEmbed("Du brauchst Manage Server oder Administrator.")], ephemeral: true });
 
-  const user = interaction.options.getUser("user", true);
-  const result = removeManager(interaction.guildId, user.id);
-  if (!result.ok) return interaction.reply({ embeds: [buildErrorEmbed(result.error || "Manager konnte nicht entfernt werden.")], ephemeral: true });
+  const user = interaction.options.getUser("user");
+  const explicitId = String(interaction.options.getString("id") || "").trim();
+  const name = String(interaction.options.getString("name") || "").trim();
+  const supplied = [Boolean(user), Boolean(explicitId), Boolean(name)].filter(Boolean).length;
+  if (supplied !== 1) return interaction.reply({
+    embeds: [buildErrorEmbed("Bitte genau ein Feld angeben: user, id oder name.")], ephemeral: true,
+  });
+
+  await interaction.deferReply({ ephemeral: true });
+  const managers = getManagers(interaction.guildId);
+  let managerId = user?.id || explicitId || null;
+
+  if (name) {
+    const target = normalizedManagerName(name);
+    const matches = [];
+    for (const manager of managers) {
+      const member = interaction.guild.members.cache.get(manager.userId)
+        || await interaction.guild.members.fetch(manager.userId).catch(() => null);
+      const globalUser = member?.user
+        || await interaction.client.users.fetch(manager.userId).catch(() => null);
+      const knownNames = [
+        manager.username, member?.displayName, member?.nickname,
+        globalUser?.username, globalUser?.globalName,
+      ];
+      if (knownNames.some(value => normalizedManagerName(value) === target)) matches.push(manager.userId);
+    }
+    if (matches.length !== 1) return interaction.editReply({
+      embeds: [buildErrorEmbed(matches.length
+        ? "Der Name ist nicht eindeutig. Nutze stattdessen die Discord-ID."
+        : "Manager nicht eindeutig gefunden. Verwende die Discord-ID (Feld id).")],
+    });
+    managerId = matches[0];
+  }
+
+  if (!/^\\d{16,22}$/.test(managerId || "")) return interaction.editReply({
+    embeds: [buildErrorEmbed("Bitte eine gültige Discord-ID oder einen registrierten Manager auswählen.")],
+  });
+
+  const result = removeManager(interaction.guildId, managerId);
+  if (!result.ok) return interaction.editReply({ embeds: [buildErrorEmbed(result.error || "Manager konnte nicht entfernt werden.")] });
 
   const count = getManagers(interaction.guildId).length;
-  return interaction.reply({ embeds: [buildSuccessEmbed("✅ Manager entfernt", `${user} wurde aus der KBB-Managerliste entfernt. **${count}/${TOP5_TARGET}**`)], ephemeral: true });
+  const snapshot = count === TOP5_TARGET
+    ? await ensureManagerRosterSnapshot(interaction.guild, {
+        channelId: getTop5ChannelId(interaction.guildId),
+        target: TOP5_TARGET,
+      }).catch(() => null)
+    : null;
+  return interaction.editReply({
+    embeds: [buildSuccessEmbed("✅ Manager entfernt", [
+      `<@${managerId}> wurde aus der aktiven KBB-Managerliste entfernt. **${count}/${TOP5_TARGET}**`,
+      snapshot?.ok ? "✅ Der neue Manager-Systemstand wurde im Top-5-Kanal gesichert." : "⚠️ Der Systemstand wird beim nächsten Bot-Prüflauf erneut gesichert.",
+      "Bisherige Top-5-Abgaben bleiben in der Historie erhalten.",
+    ].join("\n"))],
+  });
 }
 
 async function runManagerList(interaction) {
@@ -763,8 +813,10 @@ export default {
       .addUserOption(option => option.setName("user").setDescription("Discord-Mitglied").setRequired(true)))
     .addSubcommand(sub => sub
       .setName("manager-remove")
-      .setDescription("Manager aus der Teilnehmerliste entfernen")
-      .addUserOption(option => option.setName("user").setDescription("Discord-Mitglied").setRequired(true)))
+      .setDescription("Manager entfernen, auch wenn er Discord bereits verlassen hat")
+      .addUserOption(option => option.setName("user").setDescription("Discord-Mitglied").setRequired(false))
+      .addStringOption(option => option.setName("name").setDescription("Managername, z.B. Raps").setRequired(false))
+      .addStringOption(option => option.setName("id").setDescription("Discord-ID eines ausgetretenen Managers").setRequired(false)))
     .addSubcommand(sub => sub.setName("manager-list").setDescription("KBB-Managerliste anzeigen"))
     .addSubcommand(sub => sub
       .setName("setup")
