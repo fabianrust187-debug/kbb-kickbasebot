@@ -1,3 +1,4 @@
+import { ACTIVE_MANAGER_TARGET } from "./activeManagerRoster.js";
 import { getGuildSettings } from "./guildSettings.js";
 import { getManagers } from "./managerStore.js";
 import { ensureTop5SubmitButton } from "./top5Button.js";
@@ -5,7 +6,7 @@ import { isTop5DeadlinePassed } from "./top5Deadline.js";
 import { getTop5Round, getTop5Submissions } from "./top5Store.js";
 
 const DEFAULT_TOP5_CHANNEL_ID = process.env.TOP5_CHANNEL_ID || "1522249357179617331";
-const TARGET = Number(process.env.TOP5_MANAGER_TARGET || 14);
+const TARGET = ACTIVE_MANAGER_TARGET;
 
 async function ensureLateButtonForGuild(guild) {
   const round = getTop5Round(guild.id);
