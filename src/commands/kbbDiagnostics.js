@@ -1,3 +1,4 @@
+import { ACTIVE_MANAGER_TARGET } from "../utils/activeManagerRoster.js";
 import { PermissionFlagsBits } from "discord.js";
 import { buildErrorEmbed, buildKbbEmbed } from "../utils/embeds.js";
 import { getGuildSettings } from "../utils/guildSettings.js";
@@ -144,7 +145,7 @@ export async function runKbbHelp(interaction) {
       "**Regulärer Rundenstart:** Freitag um **20:00 Uhr (Europe/Berlin)** – aber nur, wenn an diesem Wochenende ein Bundesliga-Spieltag stattfindet. Länderspielpausen werden automatisch übersprungen.",
       "**Abgabefrist:** Dienstag um **22:00 Uhr (Europe/Berlin)**.",
       "Fehlende Manager dürfen ihre Abgabe nach Fristablauf weiterhin nachreichen. Die Abgabe wird als verspätet gewertet und eine bereits verhängte Strafe bleibt bestehen.",
-      "Solange mindestens ein Manager noch fehlt, bleibt bzw. erscheint der Abgabe-Button auch nach der Frist. Sobald **14/14 Abgaben** erfasst sind, wird die Runde endgültig geschlossen.",
+      "Solange mindestens ein Manager noch fehlt, bleibt bzw. erscheint der Abgabe-Button auch nach der Frist. Sobald **${ACTIVE_MANAGER_TARGET}/${ACTIVE_MANAGER_TARGET} Abgaben** erfasst sind, wird die Runde endgültig geschlossen.",
     ].join("\n"),
   });
 
