@@ -123,7 +123,7 @@ export async function runKbbHelp(interaction) {
       "• `/kbb top5-start` — neue Runde manuell starten, z. B. englische Woche *(Admin)*",
       "• `/kbb top5-reset` — aktuelle Runde zurücksetzen *(Admin)*",
       "• `/kbb manager-add` — Manager zur Teilnehmerliste hinzufügen *(Admin)*",
-      "• `/kbb manager-remove` — Manager entfernen *(Admin)*",
+      "• `/kbb manager-remove name:Raps` — Manager nach Austritt entfernen; alternativ User oder Discord-ID *(Admin)*",
       "• `/kbb manager-list` — Teilnehmerliste anzeigen",
       "• `/kbb kickbase-info` — Kickbase-Verbindung und Liga-ID prüfen *(Admin)*",
       "• `/kbb owner-test spieler:<Name>` — Kickbase-Besitzerauflösung eines Spielers prüfen *(Admin)*",
@@ -145,7 +145,7 @@ export async function runKbbHelp(interaction) {
       "**Regulärer Rundenstart:** Freitag um **20:00 Uhr (Europe/Berlin)** – aber nur, wenn an diesem Wochenende ein Bundesliga-Spieltag stattfindet. Länderspielpausen werden automatisch übersprungen.",
       "**Abgabefrist:** Dienstag um **22:00 Uhr (Europe/Berlin)**.",
       "Fehlende Manager dürfen ihre Abgabe nach Fristablauf weiterhin nachreichen. Die Abgabe wird als verspätet gewertet und eine bereits verhängte Strafe bleibt bestehen.",
-      "Solange mindestens ein Manager noch fehlt, bleibt bzw. erscheint der Abgabe-Button auch nach der Frist. Sobald **${ACTIVE_MANAGER_TARGET}/${ACTIVE_MANAGER_TARGET} Abgaben** erfasst sind, wird die Runde endgültig geschlossen.",
+      `Solange mindestens ein Manager noch fehlt, bleibt bzw. erscheint der Abgabe-Button auch nach der Frist. Sobald **${ACTIVE_MANAGER_TARGET}/${ACTIVE_MANAGER_TARGET} Abgaben** erfasst sind, wird die Runde endgültig geschlossen.`,
     ].join("\n"),
   });
 
