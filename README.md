@@ -59,7 +59,7 @@ DISCORD_TOKEN=dein_discord_bot_token
 CLIENT_ID=deine_application_client_id
 GUILD_ID=deine_discord_server_id
 TOP5_CHANNEL_ID=deine_top5_channel_id
-TOP5_MANAGER_TARGET=14
+TOP5_MANAGER_TARGET=13
 ```
 
 ### 3. Kickbase-Lesezugriff konfigurieren
