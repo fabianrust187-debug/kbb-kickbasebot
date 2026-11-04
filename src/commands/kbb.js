@@ -84,7 +84,7 @@ function buildRulesDescription() {
     `# 🟢 ${LEAGUE_INFO.name} | Saison ${LEAGUE_INFO.season}`,
     "",
     "Willkommen in der **187 KICKBASEBANDE**.",
-    "Wir spielen die Bundesliga-Saison 26/27 mit **${LEAGUE_INFO.managers} aktiven Managern**, klaren Regeln und diesem Discord-Server als **verbindlicher zentraler Anlaufstelle**.",
+    `Wir spielen die Bundesliga-Saison 26/27 mit **${LEAGUE_INFO.managers} aktiven Managern**, klaren Regeln und diesem Discord-Server als **verbindlicher zentraler Anlaufstelle**.`,
     "",
     "## 📌 Liga-Infos",
     `**Ligastart:** ${LEAGUE_INFO.startDate}`,
@@ -256,7 +256,7 @@ async function runHelp(interaction) {
       "• `/kbb top5-missing` — Fristprüfung manuell posten *(Admin)*",
       "• `/kbb top5-reset` — neue Top-5-Runde starten *(Admin)*",
       "• `/kbb manager-add` — Manager zur Teilnehmerliste hinzufügen *(Admin)*",
-      "• `/kbb manager-remove` — Manager entfernen *(Admin)*",
+      "• `/kbb manager-remove name:Raps` — ausgetretenen Manager entfernen; alternativ per User oder ID *(Admin)*",
       "• `/kbb manager-list` — Teilnehmerliste anzeigen",
       "• `/kbb setup` — Channels setzen *(Admin)*",
       "",
@@ -630,7 +630,9 @@ async function runManagerList(interaction) {
       "",
       managers.length === TOP5_TARGET
         ? "✅ Managerliste vollständig."
-        : `⚠️ Es fehlen noch **${TOP5_TARGET - managers.length}** Einträge. Die Fristprüfung läuft trotzdem; nicht hinterlegte Teilnehmer können nur nicht namentlich ausgewertet werden.`,
+        : managers.length > TOP5_TARGET
+          ? `⚠️ **${managers.length}/${TOP5_TARGET} Manager:** Bitte ausgetretene Mitglieder über \`/kbb manager-remove name:Raps\` entfernen.`
+          : `⚠️ Es fehlen noch **${TOP5_TARGET - managers.length}** Einträge. Die Fristprüfung läuft trotzdem; nicht hinterlegte Teilnehmer können nur nicht namentlich ausgewertet werden.`,
     ].join("\n"),
   });
   return interaction.reply({ embeds: [embed], ephemeral: true });
