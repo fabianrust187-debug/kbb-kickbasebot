@@ -1,3 +1,4 @@
+import { ACTIVE_MANAGER_TARGET } from "./activeManagerRoster.js";
 import { getGuildSettings, setGuildSettings } from "./guildSettings.js";
 import { getManagers } from "./managerStore.js";
 import { ensureManagerRosterSnapshot, recoverKbbStateFromDiscord } from "./top5Recovery.js";
@@ -6,7 +7,7 @@ import { startTop5Round } from "./top5RoundStart.js";
 import { closeTop5Round, getTop5Round, getTop5Submissions, resetTop5Round } from "./top5Store.js";
 
 const DEFAULT_TOP5_CHANNEL_ID = process.env.TOP5_CHANNEL_ID || "1522249357179617331";
-const DEFAULT_TARGET = Number(process.env.TOP5_MANAGER_TARGET || 14);
+const DEFAULT_TARGET = ACTIVE_MANAGER_TARGET;
 const TIME_ZONE = "Europe/Berlin";
 const WEEKDAY_INDEX = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
 const DEADLINE_WEEKDAY = "Tue";
@@ -213,7 +214,7 @@ async function postRoundStartMarker(channel) {
 
 export async function publishMissingTop5(guild, { automatic = false, resetAfter = false, now = new Date() } = {}) {
   const settings = getGuildSettings(guild.id);
-  const target = Number(process.env.TOP5_MANAGER_TARGET || DEFAULT_TARGET);
+  const target = DEFAULT_TARGET;
   const result = getMissingTop5Managers(guild.id, target, now);
   const channelId = settings.top5ChannelId || DEFAULT_TOP5_CHANNEL_ID;
   const channel = await guild.channels.fetch(channelId).catch(() => null);
@@ -265,10 +266,10 @@ async function hasRoundCompletionMarker(channel, botId) {
 }
 
 export async function finalizeTop5RoundIfComplete(guild, { now = new Date(), source = "scheduler" } = {}) {
-  const target = Number(process.env.TOP5_MANAGER_TARGET || DEFAULT_TARGET);
+  const target = DEFAULT_TARGET;
   const submissions = getTop5Submissions(guild.id);
-  if (submissions.length < target) {
-    return { ok: true, skipped: true, reason: `incomplete ${submissions.length}/${target}` };
+  if (getManagers(guild.id).length !== target || submissions.length < target) {
+    return { ok: true, skipped: true, reason: `incomplete ${submissions.length}/${target} (roster ${getManagers(guild.id).length})` };
   }
 
   const settings = getGuildSettings(guild.id);
@@ -334,7 +335,7 @@ async function recoverGuild(guild) {
   const channelId = settings.top5ChannelId || DEFAULT_TOP5_CHANNEL_ID;
   const recovery = await recoverKbbStateFromDiscord(guild, {
     channelId,
-    target: Number(process.env.TOP5_MANAGER_TARGET || DEFAULT_TARGET),
+    target: DEFAULT_TARGET,
   });
 
   if (recovery.ok) {
@@ -361,7 +362,7 @@ async function checkDeadline(guild, now = new Date()) {
   if (getTop5Round(guild.id)?.closedAt) return;
 
   const parts = berlinParts(now);
-  const result = getMissingTop5Managers(guild.id, Number(process.env.TOP5_MANAGER_TARGET || DEFAULT_TARGET), now);
+  const result = getMissingTop5Managers(guild.id, DEFAULT_TARGET, now);
   const deadline = result.deadline;
 
   if (!deadline || parts.weekday !== DEADLINE_WEEKDAY || parts.hour < 22) return;
@@ -458,7 +459,7 @@ export function startTop5DeadlineScheduler(client) {
 
       await ensureManagerRosterSnapshot(guild, {
         channelId,
-        target: Number(process.env.TOP5_MANAGER_TARGET || DEFAULT_TARGET),
+        target: DEFAULT_TARGET,
       }).catch(err => {
         console.error(`❌ Manager snapshot failed for ${guild.id}:`, err?.message || err);
       });
