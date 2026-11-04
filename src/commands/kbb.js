@@ -1,3 +1,4 @@
+import { ACTIVE_MANAGER_TARGET } from "../utils/activeManagerRoster.js";
 import {
   SlashCommandBuilder,
   ChannelType,
@@ -29,14 +30,14 @@ const LEAGUE_INFO = {
   name: "187 KICKBASEBANDE",
   season: "26/27",
   startDate: "28.07.",
-  managers: 14,
+  managers: ACTIVE_MANAGER_TARGET,
   startCapital: "Team + 50 Mio",
   entryFee: "20 €",
   payment: "paypal.me/Vegetarox",
 };
 
 const TOP5_CHANNEL_ID = process.env.TOP5_CHANNEL_ID || "1522249357179617331";
-const TOP5_TARGET = Number(process.env.TOP5_MANAGER_TARGET || LEAGUE_INFO.managers || 14);
+const TOP5_TARGET = ACTIVE_MANAGER_TARGET;
 
 function hasManageServerPermission(interaction) {
   return !!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
@@ -82,7 +83,7 @@ function buildRulesDescription() {
     `# 🟢 ${LEAGUE_INFO.name} | Saison ${LEAGUE_INFO.season}`,
     "",
     "Willkommen in der **187 KICKBASEBANDE**.",
-    "Wir spielen die Bundesliga-Saison 26/27 mit **14 aktiven Managern**, klaren Regeln und diesem Discord-Server als **verbindlicher zentraler Anlaufstelle**.",
+    "Wir spielen die Bundesliga-Saison 26/27 mit **${LEAGUE_INFO.managers} aktiven Managern**, klaren Regeln und diesem Discord-Server als **verbindlicher zentraler Anlaufstelle**.",
     "",
     "## 📌 Liga-Infos",
     `**Ligastart:** ${LEAGUE_INFO.startDate}`,
