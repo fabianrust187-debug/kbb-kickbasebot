@@ -63,3 +63,58 @@ test("player with no valid market value reports VALUE_MISSING, not a successful 
     globalThis.fetch = previousFetch;
   }
 });
+
+test("Top-5 entry Möller resolves David Møller Wolfe from an alternate Kickbase spelling", async () => {
+  const previousFetch = globalThis.fetch;
+  const queries = [];
+  globalThis.fetch = async url => {
+    const parsed = new URL(String(url));
+    if (parsed.pathname.endsWith("/players/search")) {
+      const query = parsed.searchParams.get("query");
+      queries.push(query);
+      return reply(200, { it: query === "Møller"
+        ? [{ pi: "351", fn: "David", ln: "Møller Wolfe", mv: 9800000 }]
+        : [] });
+    }
+    if (parsed.pathname.endsWith("/leagues/9058282/players/351")) {
+      return reply(200, { i: "351", fn: "David", ln: "Møller Wolfe", mv: 9800000 });
+    }
+    return reply(404, {});
+  };
+
+  try {
+    const result = await resolveKickbasePlayerMarketValue("Möller");
+    assert.equal(result.ok, true);
+    assert.equal(result.playerName, "David Møller Wolfe");
+    assert.equal(result.playerId, "351");
+    assert.equal(result.marketValue, 9800000);
+    assert.ok(queries.includes("Möller"));
+    assert.ok(queries.includes("Møller"));
+    assert.equal(new Set(queries.map(q => q.toLowerCase())).size, queries.length);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("ambiguous Möller variants are rejected instead of guessing a player", async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async url => {
+    const parsed = new URL(String(url));
+    if (parsed.pathname.endsWith("/players/search")) {
+      const query = parsed.searchParams.get("query");
+      if (query === "Möller") return reply(200, { it: [{ pi: "351", fn: "David", ln: "Möller Wolfe", mv: 9800000 }] });
+      if (query === "Møller") return reply(200, { it: [{ pi: "777", fn: "Martin", ln: "Møller Wolfe", mv: 4000000 }] });
+      return reply(200, { it: [] });
+    }
+    return reply(404, {});
+  };
+
+  try {
+    const result = await resolveKickbasePlayerMarketValue("Möller");
+    assert.equal(result.ok, false);
+    assert.equal(result.code, "AMBIGUOUS");
+    assert.deepEqual(result.suggestions, ["David Möller Wolfe", "Martin Møller Wolfe"]);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
