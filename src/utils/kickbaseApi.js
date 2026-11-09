@@ -12,6 +12,12 @@ let pendingLogin = null;
 
 function normalize(value) {
   return String(value || "")
+    // NFD does not decompose characters such as Norwegian ø.
+    .replace(/[øØ]/g, "o")
+    .replace(/[æÆ]/g, "ae")
+    .replace(/[œŒ]/g, "oe")
+    .replace(/[łŁ]/g, "l")
+    .replace(/ß/g, "ss")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
@@ -290,6 +296,34 @@ async function searchPlayers(query) {
   return extractArray(data).map(toPlayer).filter(Boolean);
 }
 
+// Kickbase may index the same name using different national spellings.
+ // Query alternatives only where they differ from the entered spelling and
+ // keep every candidate, so a similar name never silently wins.
+function playerSearchQueries(input) {
+  const original = String(input || "").trim();
+  const nordic = original.replace(/ö/gi, "ø");
+  const german = original.replace(/ø/gi, "ö");
+  const ascii = normalize(original);
+  const digraph = original
+    .replace(/[äæ]/gi, "ae")
+    .replace(/[öø]/gi, "oe")
+    .replace(/ü/gi, "ue")
+    .replace(/ß/g, "ss");
+
+  return [...new Set([original, nordic, german, ascii, digraph].filter(Boolean))];
+}
+
+async function searchPlayersWithSpellingVariants(query) {
+  const playersById = new Map();
+  for (const spelling of playerSearchQueries(query)) {
+    const found = await searchPlayers(spelling);
+    for (const player of found) {
+      if (!playersById.has(player.id)) playersById.set(player.id, player);
+    }
+  }
+  return [...playersById.values()];
+}
+
 function choosePlayer(players, query) {
   const ranked = players
     .map(player => ({ player, score: playerScore(player, query) }))
@@ -387,7 +421,7 @@ export async function resolveKickbasePlayerMarketValue(inputName) {
   }
 
   try {
-    const players = await searchPlayers(submittedName);
+    const players = await searchPlayersWithSpellingVariants(submittedName);
     const selected = choosePlayer(players, submittedName);
 
     if (selected.ambiguous) {
