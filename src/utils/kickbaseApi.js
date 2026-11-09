@@ -297,7 +297,7 @@ async function searchPlayers(query) {
 }
 
 // Kickbase may index the same name using different national spellings.
- // Query alternatives only where they differ from the entered spelling and
+// Query alternatives only where they differ from the entered spelling and
  // keep every candidate, so a similar name never silently wins.
 function playerSearchQueries(input) {
   const original = String(input || "").trim();
@@ -310,7 +310,13 @@ function playerSearchQueries(input) {
     .replace(/ü/gi, "ue")
     .replace(/ß/g, "ss");
 
-  return [...new Set([original, nordic, german, ascii, digraph].filter(Boolean))];
+  const seen = new Set();
+  return [original, nordic, german, ascii, digraph].filter(value => {
+    const key = value.toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 async function searchPlayersWithSpellingVariants(query) {
