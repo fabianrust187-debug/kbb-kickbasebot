@@ -13,7 +13,7 @@ import { buildErrorEmbed, buildKbbEmbed, buildSuccessEmbed } from "../utils/embe
 import { getGuildSettings, setGuildSettings } from "../utils/guildSettings.js";
 import { addManager, getManagers, removeManager } from "../utils/managerStore.js";
 import { formatMarketValue } from "../utils/kickbaseApi.js";
-import { publishMissingTop5 } from "../utils/top5Deadline.js";
+import { finalizeTop5RoundIfComplete, getMissingTop5Managers, publishMissingTop5 } from "../utils/top5Deadline.js";
 import { getDurableTop5History } from "../utils/top5History.js";
 import {
   correctTop5WithMarketValue,
@@ -22,9 +22,13 @@ import {
 } from "../utils/top5SubmissionService.js";
 import { fetchTop5ChannelHistory, parseTop5SubmissionMessage } from "../utils/top5Recovery.js";
 import {
+  exemptTop5Manager,
+  getTop5ExemptionForUser,
+  getTop5Exemptions,
   getTop5SubmissionForUser,
   getTop5Submissions,
   resetTop5Round,
+  revokeTop5Exemption,
 } from "../utils/top5Store.js";
 
 const LEAGUE_INFO = {
@@ -221,17 +225,23 @@ function buildTop5SummaryEmbed(submissions) {
 
 function buildTop5StatusEmbed(interaction) {
   const submissions = getTop5Submissions(interaction.guildId);
+  const exemptions = getTop5Exemptions(interaction.guildId);
   const managers = getManagers(interaction.guildId);
   return buildKbbEmbed({
     title: "📊 Top-5-Abgabe Status",
     description: [
       `**Abgegeben:** ${submissions.length}/${TOP5_TARGET}`,
+      `**Befreit:** ${exemptions.length}`,
+      `**Erledigt:** ${submissions.length + exemptions.length}/${TOP5_TARGET}`,
       `**Managerliste:** ${managers.length}/${TOP5_TARGET}`,
       `**Frist:** Dienstag, 22:00 Uhr`,
       "",
       submissions.length
         ? submissions.map((entry, index) => `**${index + 1}.** <@${entry.userId}> — **${entry.playerName}** — MW: **${formatMarketValue(entry.marketValue)}**`).join("\n")
-        : "Noch keine Abgaben gespeichert.",
+        : "Noch keine Spielerabgaben gespeichert.",
+      exemptions.length
+        ? `\n🔓 **Freigestellt (nur diese Runde):**\n${exemptions.map(entry => `• <@${entry.userId}> — ${escapeDiscordText(entry.reason)}`).join("\n")}`
+        : "",
       managers.length < TOP5_TARGET
         ? `\n⚠️ ${TOP5_TARGET - managers.length} Teilnehmer noch nicht in der Managerliste. Die Fristprüfung funktioniert trotzdem.`
         : "",
@@ -254,6 +264,7 @@ async function runHelp(interaction) {
       "• `/kbb top5-status` — Abgabestand inklusive Marktwert anzeigen",
       "• `/kbb top5-history` — gespeicherte Top-5-Abgaben und Marktwerte abrufen",
       "• `/kbb top5-missing` — Fristprüfung manuell posten *(Admin)*",
+      "• `/kbb top5-befreien manager:@Nutzer` — Manager für die aktuelle Runde freistellen *(Admin)*",
       "• `/kbb top5-reset` — neue Top-5-Runde starten *(Admin)*",
       "• `/kbb manager-add` — Manager zur Teilnehmerliste hinzufügen *(Admin)*",
       "• `/kbb manager-remove name:Raps` — ausgetretenen Manager entfernen; alternativ per User oder ID *(Admin)*",
@@ -316,6 +327,13 @@ async function runTop5(interaction) {
     }
   }
 
+  const exemption = getTop5ExemptionForUser(interaction.guildId, interaction.user.id);
+  if (exemption) {
+    return interaction.reply({
+      content: "🔓 Du bist für die aktuelle Top-5-Runde von der Abgabe befreit.",
+      ephemeral: true,
+    });
+  }
   const existing = getTop5SubmissionForUser(interaction.guildId, interaction.user.id);
   if (existing) {
     return interaction.reply({
@@ -408,6 +426,72 @@ async function runTop5Missing(interaction) {
         : "Die Auswertung wurde im Top-5-Channel veröffentlicht. Die aktuelle Runde bleibt geöffnet.",
     )],
   });
+}
+
+async function runTop5Befreien(interaction) {
+  if (!interaction.guildId || !interaction.guild) {
+    return interaction.reply({ embeds: [buildErrorEmbed("Nur auf einem Server nutzbar.")], ephemeral: true });
+  }
+  if (!hasManageServerPermission(interaction)) {
+    return interaction.reply({ embeds: [buildErrorEmbed("Du brauchst Manage Server oder Administrator.")], ephemeral: true });
+  }
+
+  const manager = interaction.options.getUser("manager", true);
+  const reason = String(interaction.options.getString("grund") || "Am Freitag im Minus – keine Wertung").trim();
+  await interaction.deferReply({ ephemeral: true });
+
+  const channelId = getTop5ChannelId(interaction.guildId);
+  const channel = await interaction.guild.channels.fetch(channelId).catch(() => null);
+  if (!channel?.isTextBased?.() || !channel?.send) {
+    return interaction.editReply({ embeds: [buildErrorEmbed("Top-5-Kanal ist nicht beschreibbar. Es wurde nichts geändert.")] });
+  }
+
+  const updated = exemptTop5Manager(interaction.guildId, manager.id, interaction.user, reason);
+  if (!updated.ok) {
+    return interaction.editReply({ embeds: [buildErrorEmbed(updated.error || "Freistellung fehlgeschlagen.")] });
+  }
+
+  // A bot-authored Discord notice makes this exemption recoverable after deploys.
+  const notice = await channel.send({
+    content: [
+      "🔓 **Top-5-Freistellung**",
+      `Manager: <@${manager.id}>`,
+      `Grund: ${escapeDiscordText(updated.exemption.reason)}`,
+      `Freigestellt von: <@${interaction.user.id}>`,
+      "**Für diese Runde ist keine Spielerabgabe erforderlich. Keine Strafe wegen fehlender Abgabe.**",
+    ].join("\n"),
+    allowedMentions: { parse: [] },
+  }).catch(() => null);
+
+  if (!notice) {
+    const rollback = revokeTop5Exemption(interaction.guildId, manager.id);
+    return interaction.editReply({ embeds: [buildErrorEmbed(rollback.ok
+      ? "Freistellung wurde nicht veröffentlicht und deshalb rückgängig gemacht."
+      : "Discord-Nachricht fehlgeschlagen. Auch das Zurücksetzen war nicht möglich – bitte den Bot-Status prüfen.")] });
+  }
+
+  const final = await finalizeTop5RoundIfComplete(interaction.guild, {
+    source: "admin-exemption",
+  }).catch(error => ({ ok: false, error: error?.message || String(error) }));
+  const result = getMissingTop5Managers(interaction.guildId);
+  const count = result.submissions.length + result.exempted.length;
+  const closing = final?.closed
+    ? "🔒 **Die Top-5-Runde wurde vollständig abgeschlossen.**"
+    : final?.alreadyClosed
+      ? "🔒 Die Runde war bereits abgeschlossen."
+      : final?.ok
+        ? `Es fehlen noch **${result.missing.length}** Abgaben; die Runde wird nach deren Eingang automatisch geschlossen.`
+        : `⚠️ Freistellung gespeichert, aber Rundenschluss konnte nicht bestätigt werden: ${final?.error || "unbekannt"}`;
+
+  return interaction.editReply({ embeds: [buildSuccessEmbed(
+    "🔓 Top-5-Freistellung gespeichert",
+    [
+      `Manager: ${manager}`,
+      `Grund: **${escapeDiscordText(updated.exemption.reason)}**`,
+      `Erledigt: **${count}/${TOP5_TARGET}** (${result.submissions.length} Abgaben, ${result.exempted.length} Freistellungen)`,
+      closing,
+    ].join("\n"),
+  )] });
 }
 
 async function runTop5Correct(interaction) {
@@ -796,6 +880,18 @@ export default {
         .setDescription("Nach der Ausgabe direkt eine neue Top-5-Runde starten")
         .setRequired(false)))
     .addSubcommand(sub => sub
+      .setName("top5-befreien")
+      .setDescription("Manager für die aktuelle Top-5-Runde von der Abgabepflicht befreien (Admin)")
+      .addUserOption(option => option
+        .setName("manager")
+        .setDescription("Welcher Manager muss diese Runde keinen Spieler abgeben?")
+        .setRequired(true))
+      .addStringOption(option => option
+        .setName("grund")
+        .setDescription("Grund, z. B. Freitag im Minus")
+        .setMaxLength(120)
+        .setRequired(false)))
+    .addSubcommand(sub => sub
       .setName("top5-correct")
       .setDescription("Top-5-Abgabe eines Managers korrigieren (Admin)")
       .addUserOption(option => option
@@ -837,6 +933,7 @@ export default {
     if (sub === "top5-status") return runTop5Status(interaction);
     if (sub === "top5-history") return runTop5History(interaction);
     if (sub === "top5-missing") return runTop5Missing(interaction);
+    if (sub === "top5-befreien") return runTop5Befreien(interaction);
     if (sub === "top5-correct") return runTop5Correct(interaction);
     if (sub === "top5-reset") return runTop5Reset(interaction);
     if (sub === "manager-add") return runManagerAdd(interaction);
