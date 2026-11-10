@@ -443,7 +443,8 @@ async function checkRegularRoundStart(guild, now = new Date()) {
 
   const fridayDateKey = localDateKey(friday);
   const settings = getGuildSettings(guild.id);
-  if (settings.lastTop5FridayStartKey === fridayDateKey) return;
+  if (settings.lastTop5FridayStartKey === fridayDateKey
+    || settings.lastTop5FridaySkipKey === fridayDateKey) return;
 
   const channelId = settings.top5ChannelId || DEFAULT_TOP5_CHANNEL_ID;
   const channel = await guild.channels.fetch(channelId).catch(() => null);
@@ -461,6 +462,18 @@ async function checkRegularRoundStart(guild, now = new Date()) {
 
   if (!started.ok) {
     console.warn(`⚠️ Friday Top-5 start failed for ${guild.id}: ${started.error}`);
+    return;
+  }
+
+  // A confirmed international break is not a started round. Do not store
+  // its Friday under lastTop5FridayStartKey or create a new deadline.
+  if (started.skipped) {
+    if (started.reason === "international-break") {
+      setGuildSettings(guild.id, {
+        lastTop5FridaySkipKey: fridayDateKey,
+        lastTop5FridaySkipReason: "international-break",
+      });
+    }
     return;
   }
 
