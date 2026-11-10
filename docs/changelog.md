@@ -1,5 +1,15 @@
 # KBB Kickbase Bot — Changelog
 
+## Version 0.8.5 — November-Länderspielpause / Top-5-Termine
+
+- Der offizielle DFB-Spielplan wird für die November-Pause 2026 als datierter Schutz berücksichtigt: **kein** automatischer Top-5-Start am **13.11.2026**.
+- Wiederaufnahme am Freitag, **20.11.2026 um 20:00 Uhr**, zum Bundesliga-Spieltag vom 20.–22.11.; Abgabefrist Dienstag, **24.11.2026 um 22:00 Uhr** (Europe/Berlin).
+- Ein übersprungener Freitag wird im Scheduler nicht länger fälschlich als gestartete Runde verbucht.
+- `/kbb top5-status` zeigt während der Pause nach Abschluss der vorherigen Runde den verifizierten nächsten Start und die konkrete neue Frist; in einer laufenden Runde wird das berechnete Deadline-Datum angezeigt.
+- Keine rückwirkende Änderung bisheriger Abgaben, Strafen oder Zeitstempel.
+- Quellen: https://www.dfb.de/rahmenterminkalender und https://datencenter.dfb.de/de/competitions/bundesliga/seasons/2026-2027/matchday/10
+
+
 ## Version 0.8.4 — Top-5-Freistellung einzelner Manager
 
 - Neuer Admin-Befehl `/kbb top5-befreien manager:@Nutzer grund:Freitag im Minus`.
