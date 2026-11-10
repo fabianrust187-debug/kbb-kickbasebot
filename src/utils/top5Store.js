@@ -151,7 +151,7 @@ export function exemptTop5Manager(guildId, userId, actor = null, reason = "Am Sp
 
   const exemption = {
     userId: String(userId),
-    reason: String(reason || "Am Spieltag im Minus").trim().slice(0, 150),
+    reason: String(reason || "Am Spieltag im Minus").replace(/[\r\n*_`~>|\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, 150),
     exemptedAt: new Date().toISOString(),
     exemptedBy: actor?.id || null,
   };
@@ -185,7 +185,7 @@ export function restoreTop5Exemptions(guildId, entries = []) {
   let restored = 0;
   for (const entry of entries) {
     const userId = String(entry?.userId || "").trim();
-    if (!/^\\d{16,22}$/.test(userId) || round.submissions?.[userId] || round.exemptions?.[userId]) continue;
+    if (!/^\d{16,22}$/.test(userId) || round.submissions?.[userId] || round.exemptions?.[userId]) continue;
     round.exemptions[userId] = {
       userId,
       reason: String(entry.reason || "Am Spieltag im Minus").trim().slice(0, 150),
