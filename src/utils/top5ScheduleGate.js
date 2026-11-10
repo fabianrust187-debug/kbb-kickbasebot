@@ -66,6 +66,9 @@ function espnDate(parts) {
 }
 
 function currentWindowFriday(parts) {
+  // Mirror the deadline scheduler's exact Friday 20:00 to Tuesday 22:00 window.
+  if (parts.weekday === "Fri" && parts.hour < 20) return null;
+  if (parts.weekday === "Tue" && parts.hour >= 22) return null;
   const daysBack = {
     Fri: 0,
     Sat: 1,
