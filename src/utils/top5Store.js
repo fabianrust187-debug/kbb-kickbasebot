@@ -45,11 +45,15 @@ function getOrCreateRound(data, guildId) {
       closedBy: null,
       closeReason: null,
       submissions: {},
+      exemptions: {},
     };
   }
 
   if (!data[guildId].activeRound.submissions) {
     data[guildId].activeRound.submissions = {};
+  }
+  if (!data[guildId].activeRound.exemptions) {
+    data[guildId].activeRound.exemptions = {};
   }
 
   return data[guildId].activeRound;
@@ -94,6 +98,108 @@ export function getTop5Submissions(guildId) {
 export function getTop5SubmissionForUser(guildId, userId) {
   const round = getTop5Round(guildId);
   return round?.submissions?.[userId] || null;
+}
+
+
+function activeCompletionCounts(guildId, round) {
+  const managers = getManagers(guildId);
+  const activeIds = new Set(managers.map(manager => String(manager.userId)));
+  const submittedIds = new Set(
+    Object.keys(round?.submissions || {}).filter(id => activeIds.has(String(id))),
+  );
+  const exemptIds = Object.keys(round?.exemptions || {})
+    .filter(id => activeIds.has(String(id)) && !submittedIds.has(String(id)));
+  return {
+    managers: managers.length,
+    submitted: submittedIds.size,
+    exempted: exemptIds.length,
+    completed: submittedIds.size + exemptIds.length,
+  };
+}
+
+export function getTop5Exemptions(guildId) {
+  const round = getTop5Round(guildId);
+  const activeIds = new Set(getManagers(guildId).map(manager => String(manager.userId)));
+  return Object.values(round?.exemptions || {})
+    .filter(entry => activeIds.has(String(entry.userId)) && !round?.submissions?.[entry.userId])
+    .sort((a, b) => String(a.exemptedAt).localeCompare(String(b.exemptedAt)));
+}
+
+export function getTop5ExemptionForUser(guildId, userId) {
+  return getTop5Round(guildId)?.exemptions?.[userId] || null;
+}
+
+// Exemptions are not fake submissions. They apply only to the currently
+// active round and are archived with it on reset.
+export function exemptTop5Manager(guildId, userId, actor = null, reason = "Am Spieltag im Minus") {
+  if (!guildId || !userId) return { ok: false, error: "Guild oder Manager fehlt." };
+  const managers = getManagers(guildId);
+  if (!managers.some(manager => String(manager.userId) === String(userId))) {
+    return { ok: false, code: "NOT_A_MANAGER", error: "Dieser Nutzer steht nicht in der aktiven Managerliste." };
+  }
+
+  const data = read();
+  const round = data[guildId]?.activeRound;
+  if (!round) return { ok: false, error: "Keine aktive Top-5-Runde gefunden." };
+  if (round.closedAt) return { ok: false, code: "ROUND_CLOSED", error: "Diese Runde ist bereits geschlossen." };
+  if (round.submissions?.[userId]) {
+    return { ok: false, code: "ALREADY_SUBMITTED", error: "Dieser Manager hat bereits einen Spieler abgegeben." };
+  }
+  if (round.exemptions?.[userId]) {
+    return { ok: false, code: "ALREADY_EXEMPT", error: "Dieser Manager ist bereits für diese Runde freigestellt." };
+  }
+
+  const exemption = {
+    userId: String(userId),
+    reason: String(reason || "Am Spieltag im Minus").trim().slice(0, 150),
+    exemptedAt: new Date().toISOString(),
+    exemptedBy: actor?.id || null,
+  };
+  if (!round.exemptions) round.exemptions = {};
+  round.exemptions[userId] = exemption;
+  const counts = activeCompletionCounts(guildId, round);
+  if (counts.managers === DEFAULT_TOP5_TARGET && counts.completed === DEFAULT_TOP5_TARGET) {
+    round.completedAt = round.completedAt || exemption.exemptedAt;
+  }
+  if (!write(data)) return { ok: false, error: "Top-5-Freistellung konnte nicht gespeichert werden." };
+  return { ok: true, exemption, round, ...counts };
+}
+
+// Used to roll back a freistellung if the durable Discord notice could not be sent.
+export function revokeTop5Exemption(guildId, userId) {
+  const data = read();
+  const round = data[guildId]?.activeRound;
+  if (!round || round.closedAt || !round.exemptions?.[userId]) return { ok: false };
+  delete round.exemptions[userId];
+  const counts = activeCompletionCounts(guildId, round);
+  if (counts.completed < DEFAULT_TOP5_TARGET) round.completedAt = null;
+  return { ok: write(data) };
+}
+
+// Reconstruct the current round's exemptions from the bot's Discord messages
+// after a hosting redeploy; duplicates and submissions are never overwritten.
+export function restoreTop5Exemptions(guildId, entries = []) {
+  if (!guildId || !Array.isArray(entries)) return { ok: false, error: "Ungültige Freistellungen." };
+  const data = read();
+  const round = getOrCreateRound(data, guildId);
+  let restored = 0;
+  for (const entry of entries) {
+    const userId = String(entry?.userId || "").trim();
+    if (!/^\\d{16,22}$/.test(userId) || round.submissions?.[userId] || round.exemptions?.[userId]) continue;
+    round.exemptions[userId] = {
+      userId,
+      reason: String(entry.reason || "Am Spieltag im Minus").trim().slice(0, 150),
+      exemptedAt: validIso(entry.exemptedAt),
+      exemptedBy: entry.exemptedBy || null,
+    };
+    restored++;
+  }
+  const counts = activeCompletionCounts(guildId, round);
+  if (counts.managers === DEFAULT_TOP5_TARGET && counts.completed === DEFAULT_TOP5_TARGET) {
+    round.completedAt = round.completedAt || new Date().toISOString();
+  }
+  if (!write(data)) return { ok: false, error: "Freistellungen konnten nicht wiederhergestellt werden." };
+  return { ok: true, restored, ...counts };
 }
 
 export function getTop5History(guildId, limit = 20) {
@@ -157,6 +263,9 @@ export function addTop5Submission(
       target,
     };
   }
+  if (round.exemptions?.[user.id]) {
+    return { ok: false, code: "EXEMPT", error: "Du bist für diese Top-5-Runde von der Abgabe befreit." };
+  }
 
   const submission = {
     userId: user.id,
@@ -178,7 +287,8 @@ export function addTop5Submission(
   const activeSubmissions = Object.values(round.submissions)
     .filter(entry => activeIds.size === 0 || activeIds.has(String(entry.userId)));
   const count = activeSubmissions.length;
-  const complete = count >= target;
+  const counts = activeCompletionCounts(guildId, round);
+  const complete = counts.managers === target && counts.completed === target;
   if (complete && !round.completedAt) {
     round.completedAt = new Date().toISOString();
   }
@@ -252,7 +362,8 @@ export function restoreTop5Submissions(guildId, entries = [], target = DEFAULT_T
 
   const activeIds = new Set(getManagers(guildId).map(manager => String(manager.userId)));
   const activeCount = submissions.filter(entry => activeIds.size === 0 || activeIds.has(String(entry.userId))).length;
-  const complete = activeCount >= target;
+  const counts = activeCompletionCounts(guildId, round);
+  const complete = counts.managers === target && counts.completed === target;
   if (complete && !round.completedAt) {
     round.completedAt = submissions[submissions.length - 1]?.createdAt || new Date().toISOString();
   }
@@ -419,6 +530,7 @@ export function resetTop5Round(guildId, actor = null) {
     closedBy: null,
     closeReason: null,
     submissions: {},
+    exemptions: {},
   };
 
   if (!write(data)) return { ok: false, error: "Top-5-Runde konnte nicht zurückgesetzt werden." };
