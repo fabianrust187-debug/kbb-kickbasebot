@@ -4,7 +4,7 @@ import { getManagers } from "./managerStore.js";
 import { ensureManagerRosterSnapshot, recoverKbbStateFromDiscord } from "./top5Recovery.js";
 import { cleanupTop5SubmitButtons, ensureTop5SubmitButton } from "./top5Button.js";
 import { startTop5Round } from "./top5RoundStart.js";
-import { closeTop5Round, getTop5Round, getTop5Submissions, resetTop5Round } from "./top5Store.js";
+import { closeTop5Round, getTop5Exemptions, getTop5Round, getTop5Submissions, resetTop5Round } from "./top5Store.js";
 
 const DEFAULT_TOP5_CHANNEL_ID = process.env.TOP5_CHANNEL_ID || "1522249357179617331";
 const DEFAULT_TARGET = ACTIVE_MANAGER_TARGET;
@@ -103,15 +103,23 @@ export function isTop5DeadlinePassed(guildId, now = new Date()) {
 export function getMissingTop5Managers(guildId, target = DEFAULT_TARGET, now = new Date()) {
   const managers = getManagers(guildId);
   const submissions = getTop5Submissions(guildId);
+  const exemptions = getTop5Exemptions(guildId);
   const deadline = getRoundDeadline(guildId);
   const deadlinePassed = isTop5DeadlinePassed(guildId, now);
   const byUser = new Map(submissions.map(entry => [String(entry.userId), entry]));
+  const exemptByUser = new Map(exemptions.map(entry => [String(entry.userId), entry]));
 
   const missing = [];
+  const exempted = [];
   const late = [];
   const timely = [];
 
   for (const manager of managers) {
+    const exemption = exemptByUser.get(String(manager.userId));
+    if (exemption) {
+      exempted.push({ ...manager, exemption });
+      continue;
+    }
     const submission = byUser.get(String(manager.userId));
     if (!submission) {
       missing.push(manager);
@@ -132,6 +140,7 @@ export function getMissingTop5Managers(guildId, target = DEFAULT_TARGET, now = n
   return {
     managers,
     submissions,
+    exempted,
     missing,
     late,
     timely,
@@ -171,13 +180,23 @@ function appendRoundLifecycle(lines, { automatic = false, resetAfter = false } =
 export function buildMissingTop5Message(result, { automatic = false, resetAfter = false } = {}) {
   const heading = automatic ? "## ⏰ Top-5-Abgabefrist beendet" : "## 📋 Top-5-Fristprüfung";
 
+  const eligibleCount = result.managers.length - result.exempted.length;
+  const exemptionLines = result.exempted.length
+    ? [
+        "",
+        `🔓 **${result.exempted.length} Manager von der Abgabe befreit:**`,
+        ...result.exempted.map(manager => `• <@${manager.userId}> — **${manager.exemption.reason}**`),
+      ]
+    : [];
+
   if (!result.failed.length) {
     const lines = [
       heading,
       "",
       result.deadlinePassed && result.deadline
-        ? `✅ Alle **${result.managers.length} hinterlegten Manager** haben bis **${result.deadline.label}** rechtzeitig abgegeben.`
-        : `✅ Aktuell haben alle **${result.managers.length} hinterlegten Manager** ihre Top-5-Abgabe eingereicht.`,
+        ? `✅ Alle **${eligibleCount} abgabepflichtigen Manager** haben bis **${result.deadline.label}** rechtzeitig abgegeben.`
+        : `✅ Aktuell haben alle **${eligibleCount} abgabepflichtigen Manager** ihre Top-5-Abgabe eingereicht.`,
+      ...exemptionLines,
     ];
     appendRosterWarning(lines, result);
     appendRoundLifecycle(lines, { automatic, resetAfter });
@@ -199,7 +218,7 @@ export function buildMissingTop5Message(result, { automatic = false, resetAfter 
     lines.push(`**${index++}.** <@${manager.userId}> — **zu spät** (${formatSubmissionTime(manager.submission.createdAt)})`);
   }
 
-  lines.push("", `❌ **${result.failed.length}/${result.managers.length} hinterlegten Manager** haben nicht rechtzeitig abgegeben.`);
+  lines.push("", `❌ **${result.failed.length}/${eligibleCount} abgabepflichtigen Manager** haben nicht rechtzeitig abgegeben.`, ...exemptionLines);
   appendRosterWarning(lines, result);
   appendRoundLifecycle(lines, { automatic, resetAfter });
   return lines.join("\n");
@@ -267,9 +286,11 @@ async function hasRoundCompletionMarker(channel, botId) {
 
 export async function finalizeTop5RoundIfComplete(guild, { now = new Date(), source = "scheduler" } = {}) {
   const target = DEFAULT_TARGET;
-  const submissions = getTop5Submissions(guild.id);
-  if (getManagers(guild.id).length !== target || submissions.length < target) {
-    return { ok: true, skipped: true, reason: `incomplete ${submissions.length}/${target} (roster ${getManagers(guild.id).length})` };
+  const result = getMissingTop5Managers(guild.id, target, now);
+  const submissions = result.submissions;
+  const completeCount = submissions.length + result.exempted.length;
+  if (result.managers.length !== target || result.missing.length || completeCount !== target) {
+    return { ok: true, skipped: true, reason: `incomplete ${completeCount}/${target} (roster ${result.managers.length})` };
   }
 
   const settings = getGuildSettings(guild.id);
@@ -291,12 +312,20 @@ export async function finalizeTop5RoundIfComplete(guild, { now = new Date(), sou
     return { ok: closed.ok, skipped: true, recoveredClosure: true, error: closed.error || null };
   }
 
-  const result = getMissingTop5Managers(guild.id, target, now);
   const lines = [
     ROUND_COMPLETE_HEADING,
     "",
-    `✅ **${submissions.length}/${target} Manager** haben ihre Spielerabgabe eingereicht.`,
+    result.exempted.length
+      ? `✅ **${submissions.length} Spielerabgaben + ${result.exempted.length} Freistellungen = ${completeCount}/${target} erledigt.**`
+      : `✅ **${submissions.length}/${target} Manager** haben ihre Spielerabgabe eingereicht.`,
   ];
+  if (result.exempted.length) {
+    lines.push(
+      "",
+      "🔓 **Von der Top-5-Abgabepflicht befreit:**",
+      ...result.exempted.map(manager => `• <@${manager.userId}> — **${manager.exemption.reason}**`),
+    );
+  }
 
   if (result.late.length) {
     lines.push(
@@ -326,8 +355,8 @@ export async function finalizeTop5RoundIfComplete(guild, { now = new Date(), sou
     return { ok: false, error: closed.error || "Top-5-Runde konnte nicht geschlossen werden.", message };
   }
 
-  console.log(`🔒 Top-5 round finalized for ${guild.name}: ${submissions.length}/${target}, late=${result.late.length}, source=${source}`);
-  return { ok: true, closed: true, lateCount: result.late.length, result, message };
+  console.log(`🔒 Top-5 round finalized for ${guild.name}: ${submissions.length} submissions + ${result.exempted.length} exemptions /${target}, late=${result.late.length}, source=${source}`);
+  return { ok: true, closed: true, lateCount: result.late.length, exemptionCount: result.exempted.length, result, message };
 }
 
 async function recoverGuild(guild) {
