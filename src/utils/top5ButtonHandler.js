@@ -18,6 +18,7 @@ import {
 import {
   getTop5Round,
   getTop5SubmissionForUser,
+  getTop5ExemptionForUser,
 } from "./top5Store.js";
 
 const DEFAULT_TOP5_CHANNEL_ID = process.env.TOP5_CHANNEL_ID || "1522249357179617331";
@@ -104,6 +105,11 @@ export async function handleTop5Button(interaction) {
       await interaction.reply({ content: "🔄 Dieser Button gehört zu einer bereits beendeten Top-5-Runde. Bitte nutze den aktuellen Button im Channel.", ephemeral: true });
       return true;
     }
+  }
+
+  if (getTop5ExemptionForUser(interaction.guildId, interaction.user.id)) {
+    await interaction.reply({ content: "🔓 Du bist für diese Top-5-Runde von der Abgabepflicht befreit.", ephemeral: true });
+    return true;
   }
 
   const existing = getTop5SubmissionForUser(interaction.guildId, interaction.user.id);
