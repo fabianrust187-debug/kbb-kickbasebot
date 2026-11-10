@@ -13,7 +13,8 @@ import { buildErrorEmbed, buildKbbEmbed, buildSuccessEmbed } from "../utils/embe
 import { getGuildSettings, setGuildSettings } from "../utils/guildSettings.js";
 import { addManager, getManagers, removeManager } from "../utils/managerStore.js";
 import { formatMarketValue } from "../utils/kickbaseApi.js";
-import { finalizeTop5RoundIfComplete, getMissingTop5Managers, publishMissingTop5 } from "../utils/top5Deadline.js";
+import { finalizeTop5RoundIfComplete, getMissingTop5Managers, getRoundDeadline, publishMissingTop5 } from "../utils/top5Deadline.js";
+import { getUpcomingVerifiedTop5Schedule } from "../utils/top5ScheduleGate.js";
 import { getDurableTop5History } from "../utils/top5History.js";
 import {
   correctTop5WithMarketValue,
@@ -25,6 +26,7 @@ import {
   exemptTop5Manager,
   getTop5ExemptionForUser,
   getTop5Exemptions,
+  getTop5Round,
   getTop5SubmissionForUser,
   getTop5Submissions,
   resetTop5Round,
@@ -227,6 +229,19 @@ function buildTop5StatusEmbed(interaction) {
   const submissions = getTop5Submissions(interaction.guildId);
   const exemptions = getTop5Exemptions(interaction.guildId);
   const managers = getManagers(interaction.guildId);
+  const activeRound = getTop5Round(interaction.guildId);
+  const upcoming = getUpcomingVerifiedTop5Schedule();
+  const currentDeadline = getRoundDeadline(interaction.guildId);
+  const deadlineLines = (activeRound?.closedAt && upcoming) || (!activeRound && upcoming)
+    ? [
+        "**Runde:** abgeschlossen – Länderspielpause",
+        `**Nächster Start:** ${upcoming.nextRoundStart}`,
+        `**Nächste Frist:** ${upcoming.nextSubmissionDeadline}`,
+      ]
+    : [
+        `**Frist:** ${currentDeadline?.label || "Dienstag, 22:00 Uhr"}`,
+        activeRound?.closedAt ? "**Runde:** abgeschlossen" : "",
+      ];
   return buildKbbEmbed({
     title: "📊 Top-5-Abgabe Status",
     description: [
@@ -234,7 +249,7 @@ function buildTop5StatusEmbed(interaction) {
       `**Befreit:** ${exemptions.length}`,
       `**Erledigt:** ${submissions.length + exemptions.length}/${TOP5_TARGET}`,
       `**Managerliste:** ${managers.length}/${TOP5_TARGET}`,
-      `**Frist:** Dienstag, 22:00 Uhr`,
+      ...deadlineLines,
       "",
       submissions.length
         ? submissions.map((entry, index) => `**${index + 1}.** <@${entry.userId}> — **${entry.playerName}** — MW: **${formatMarketValue(entry.marketValue)}**`).join("\n")
