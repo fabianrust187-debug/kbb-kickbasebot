@@ -18,7 +18,8 @@ Discord Bot für die **187 KICKBASEBANDE** Kickbase-Liga.
 - `/kbb top5-reset` — neue Runde manuell starten
 - `/kbb manager-add`, `/kbb manager-remove`, `/kbb manager-list` — Managerverwaltung
 - `/kbb setup` — relevante Discord-Channels konfigurieren
-- automatische Top-5-Fristprüfung jeden **Dienstag um 22:00 Uhr (Europe/Berlin)**
+- automatische Top-5-Fristprüfung jeden **Dienstag um 22:00 Uhr (Europe/Berlin)** nach einem regulären Bundesliga-Spieltag
+- **Länderspielpause November 2026:** kein Rundenstart am Freitag, 13.11.; nächste Runde Freitag, **20.11.2026, 20:00 Uhr**, mit Abgabefrist **Dienstag, 24.11.2026, 22:00 Uhr**. Der Rundenstart wird in dieser Woche durch den offiziell bestätigten Spielplan abgesichert.
 - Discord-basierte Wiederherstellung von Managerliste und Top-5-Daten nach Deploys
 - read-only Kickbase-Anbindung für Spielerauflösung und Marktwert-Snapshots
 
