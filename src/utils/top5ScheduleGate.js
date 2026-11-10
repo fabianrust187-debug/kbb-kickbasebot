@@ -21,6 +21,8 @@ function berlinParts(date = new Date()) {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
   }).formatToParts(date);
   const map = Object.fromEntries(parts.map(part => [part.type, part.value]));
   return {
@@ -28,6 +30,7 @@ function berlinParts(date = new Date()) {
     year: Number(map.year),
     month: Number(map.month),
     day: Number(map.day),
+    hour: Number(map.hour ?? 0),
   };
 }
 
@@ -48,7 +51,10 @@ function dateKey(parts) {
 // or overwrite the active round's actual deadline.
 export function getUpcomingVerifiedTop5Schedule(now = new Date()) {
   const currentKey = dateKey(berlinParts(now));
-  if (currentKey < "2026-11-09" || currentKey >= "2026-11-20") return null;
+  const berlinHour = berlinParts(now).hour;
+  if (currentKey < "2026-11-09"
+    || currentKey > "2026-11-20"
+    || (currentKey === "2026-11-20" && berlinHour >= 20)) return null;
   return {
     nextRoundStart: "20.11.2026, 20:00 Uhr",
     nextSubmissionDeadline: "24.11.2026, 22:00 Uhr",
