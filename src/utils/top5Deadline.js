@@ -316,7 +316,7 @@ export async function finalizeTop5RoundIfComplete(guild, { now = new Date(), sou
     ROUND_COMPLETE_HEADING,
     "",
     result.exempted.length
-      ? `✅ **${submissions.length} Spielerabgaben + ${result.exempted.length} Freistellungen = ${completeCount}/${target} erledigt.**`
+      ? `✅ **${submissions.length} Spielerabgaben + ${result.exempted.length} ${result.exempted.length === 1 ? "Freistellung" : "Freistellungen"} = ${completeCount}/${target} erledigt.**`
       : `✅ **${submissions.length}/${target} Manager** haben ihre Spielerabgabe eingereicht.`,
   ];
   if (result.exempted.length) {
