@@ -98,7 +98,7 @@ test("12 submissions plus a Friday-minus exemption complete the 13-manager round
   assert.equal(finalized.closed, true);
   assert.equal(finalized.exemptionCount, 1);
   assert.ok(getTop5Round(guildId).closedAt);
-  assert.match(messages.at(-1).content, /12 Spielerabgaben \+ 1 Freistellungen = 13\/13 erledigt/);
+  assert.match(messages.at(-1).content, /12 Spielerabgaben \+ 1 Freistellung = 13\/13 erledigt/);
 
   const twice = await finalizeTop5RoundIfComplete(guild, { source: "unit-test" });
   assert.equal(twice.alreadyClosed, true);
