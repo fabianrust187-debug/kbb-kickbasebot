@@ -4,6 +4,14 @@ const TIMEOUT_MS = 8_000;
 const CACHE_TTL_MS = 6 * 60 * 60_000;
 const ERROR_CACHE_TTL_MS = 10 * 60_000;
 
+// Verified against the DFB 2026/27 calendar (international break 09–17 Nov)
+// and Bundesliga matchday 10 (20–22 Nov). These date-specific guards prevent
+// a stale/partial external scoreboard from starting a false Top-5 round.
+const VERIFIED_FRIDAY_WINDOWS = new Map([
+  ["2026-11-13", { shouldStart: false, fixtureCount: 0, reason: "international-break" }],
+  ["2026-11-20", { shouldStart: true, fixtureCount: 9, reason: "official-bundesliga-matchday-10" }],
+]);
+
 const cache = new Map();
 
 function berlinParts(date = new Date()) {
@@ -34,6 +42,17 @@ function addDays(parts, days) {
 
 function dateKey(parts) {
   return `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
+// Display hint for the currently verified break. This does not open a round
+// or overwrite the active round's actual deadline.
+export function getUpcomingVerifiedTop5Schedule(now = new Date()) {
+  const currentKey = dateKey(berlinParts(now));
+  if (currentKey < "2026-11-09" || currentKey >= "2026-11-20") return null;
+  return {
+    nextRoundStart: "20.11.2026, 20:00 Uhr",
+    nextSubmissionDeadline: "24.11.2026, 22:00 Uhr",
+  };
 }
 
 function espnDate(parts) {
@@ -78,6 +97,11 @@ export async function shouldStartScheduledTop5Round(now = new Date()) {
   }
 
   const fridayKey = dateKey(friday);
+  const verified = VERIFIED_FRIDAY_WINDOWS.get(fridayKey);
+  if (verified) {
+    return { ok: true, fridayKey, ...verified };
+  }
+
   const cached = cache.get(fridayKey);
   if (cached && cached.expiresAt > Date.now()) return cached.result;
 
