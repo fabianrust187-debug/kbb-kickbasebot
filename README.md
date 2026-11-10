@@ -14,6 +14,7 @@ Discord Bot für die **187 KICKBASEBANDE** Kickbase-Liga.
 - `/kbb top5-status` — aktuelle Abgaben inklusive gespeichertem Marktwert anzeigen
 - `/kbb top5-history` — historische Top-5-Abgaben und Marktwerte abrufen
 - `/kbb top5-missing` — fehlende/verspätete Abgaben manuell auswerten
+- `/kbb top5-befreien manager:@Nutzer grund:Freitag im Minus` — Admin-Freistellung für die aktuelle Runde; zählt für den Abschluss, aber nicht als Spielerabgabe
 - `/kbb top5-reset` — neue Runde manuell starten
 - `/kbb manager-add`, `/kbb manager-remove`, `/kbb manager-list` — Managerverwaltung
 - `/kbb setup` — relevante Discord-Channels konfigurieren
