@@ -1,6 +1,6 @@
 import { getGuildSettings, setGuildSettings } from "./guildSettings.js";
 import { addManager, getManagers } from "./managerStore.js";
-import { restoreTop5Submissions } from "./top5Store.js";
+import { restoreTop5Exemptions, restoreTop5Submissions } from "./top5Store.js";
 import {
   ACTIVE_MANAGER_TARGET,
   isRetiredManagerName,
@@ -48,6 +48,21 @@ export function parseTop5SubmissionMessage(message) {
       || message.createdAt?.toISOString?.()
       || new Date(message.createdTimestamp || Date.now()).toISOString(),
     messageId: message.id,
+  };
+}
+
+// Only the bot's canonical current-round notices are used for recovery.
+export function parseTop5ExemptionMessage(message) {
+  const content = String(message?.content || "");
+  if (!content.startsWith("🔓 **Top-5-Freistellung**")) return null;
+  const userId = content.match(/^Manager:\s*<@!?(\\d{16,22})>$/m)?.[1];
+  if (!userId) return null;
+  const reason = content.match(/^Grund:\s*(.+)$/m)?.[1]?.trim() || "Am Spieltag im Minus";
+  return {
+    userId,
+    reason,
+    exemptedAt: message.createdAt?.toISOString?.()
+      || new Date(message.createdTimestamp || Date.now()).toISOString(),
   };
 }
 
@@ -128,6 +143,10 @@ export async function recoverKbbStateFromDiscord(guild, { channelId = null, targ
   const restoredRound = restoreTop5Submissions(guild.id, uniqueCurrent, target);
   if (!restoredRound.ok) return restoredRound;
 
+  const currentExemptions = currentMessages.map(parseTop5ExemptionMessage).filter(Boolean);
+  const restoredExemptions = restoreTop5Exemptions(guild.id, currentExemptions);
+  if (!restoredExemptions.ok) return restoredExemptions;
+
   // Reconcile the old saved 14-manager list before restoring candidates.
   // This excludes members who have left Discord and the explicitly departed
   // Kickbase manager Raps (without deleting historical Top-5 submissions).
@@ -195,6 +214,8 @@ export async function recoverKbbStateFromDiscord(guild, { channelId = null, targ
     submissionMessages: allSubmissionEntries.length,
     currentSubmissionsFound: uniqueCurrent.length,
     submissionsRestored: restoredRound.restored,
+    exemptionsRestored: restoredExemptions.restored,
+    currentExemptionCount: restoredExemptions.exempted,
     currentSubmissionCount: restoredRound.count,
     managersRecovered,
     managerCount: getManagers(guild.id).length,
