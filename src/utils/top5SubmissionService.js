@@ -6,10 +6,15 @@ import {
   correctTop5Submission,
   getTop5Round,
   getTop5SubmissionForUser,
+  getTop5ExemptionForUser,
   sanitizePlayerName,
 } from "./top5Store.js";
 
 export async function submitTop5WithMarketValue(guildId, user, inputName, target) {
+  const exempt = getTop5ExemptionForUser(guildId, user?.id);
+  if (exempt) {
+    return { ok: false, code: "EXEMPT", error: "Du bist in dieser Runde von der Top-5-Abgabe befreit." };
+  }
   const existing = getTop5SubmissionForUser(guildId, user?.id);
   if (existing) {
     return {
