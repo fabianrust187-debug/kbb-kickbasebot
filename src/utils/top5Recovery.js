@@ -55,9 +55,10 @@ export function parseTop5SubmissionMessage(message) {
 export function parseTop5ExemptionMessage(message) {
   const content = String(message?.content || "");
   if (!content.startsWith("🔓 **Top-5-Freistellung**")) return null;
-  const userId = content.match(/^Manager:\s*<@!?(\\d{16,22})>$/m)?.[1];
+  const userId = content.match(/^Manager:\s*<@!?(\d{16,22})>$/m)?.[1];
   if (!userId) return null;
-  const reason = content.match(/^Grund:\s*(.+)$/m)?.[1]?.trim() || "Am Spieltag im Minus";
+  const reason = (content.match(/^Grund:\s*(.+)$/m)?.[1] || "Am Spieltag im Minus")
+    .replace(/\\([*_~`>|\\])/g, "$1").trim();
   return {
     userId,
     reason,
