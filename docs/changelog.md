@@ -1,5 +1,16 @@
 # KBB Kickbase Bot — Changelog
 
+## Version 0.8.4 — Top-5-Freistellung einzelner Manager
+
+- Neuer Admin-Befehl `/kbb top5-befreien manager:@Nutzer grund:Freitag im Minus`.
+- Freigestellte Manager müssen in dieser Runde keinen Spieler abgeben und werden bei der Fristprüfung nicht als fehlend oder verspätet bewertet.
+- Beispiel: 12 Spielerabgaben + 1 Freistellung schließen die Runde bei 13/13 automatisch ab.
+- Status und Abschlussmeldung unterscheiden tatsächliche Spielerabgaben von Freistellungen.
+- Freistellungen werden als Bot-Nachricht im Top-5-Kanal gesichert und nach Discloud-Neustarts wiederhergestellt.
+- Neue Top-5-Runden beginnen wieder ohne Freistellungen; abgeschlossene Runden behalten die Informationen im Archiv.
+- Die Funktion ist nur für Manager auf der aktiven Liste nutzbar, blockiert doppelte Freistellungen und überschreibt keine bestehende Spielerabgabe.
+
+
 ## Version 0.4.6 — Kickbase Market Value Archive
 
 ### New
